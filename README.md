@@ -1,82 +1,140 @@
-<p align="center"><img src="docs/logo.png" width="120" alt="Buildora"></p>
+<p align="center">
+  <img src="docs/logo.png" width="128" alt="Buildora logo">
+</p>
 
-# Buildora
+<h1 align="center">Buildora</h1>
 
-**An on-device Android app builder for Java + XML.** Write, build, sign and install real APKs entirely on your phone.
+<p align="center">
+  <b>Build real Android apps with Java &amp; XML — entirely on your phone.</b><br>
+  Write code, compile, sign and install an APK without a PC.
+</p>
+
+<p align="center">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Android%208.0%2B-3DDC84?logo=android&logoColor=white">
+  <img alt="Language" src="https://img.shields.io/badge/built%20with-Java%20%2B%20XML-3F7EB8">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
+
+---
+
+## What is Buildora?
+
+Buildora is an on-device app builder. It contains a code editor and a complete build pipeline, so you can
+create a project, press **▶**, and get a signed, installable APK in seconds — no computer, no cloud build.
+
+```
+Java sources ──ECJ──▶ .class ──D8──▶ dex ─┐
+Resources / Manifest ──aapt2──▶ resources ─┴─▶ package ──apksig──▶ signed APK
+```
+
 Buildora itself is written in Java + XML and is built with GitHub Actions.
 
-```
-ECJ (Java compiler) → aapt2 (resources) → D8 (dex) → zipalign-style packager → apksig (v1/v2/v3 signing)
-```
+## Download
 
-## Build Buildora on GitHub (3 steps)
+Get the latest `Buildora.apk` from the **[Releases](../../releases)** page and install it.
+Android asks you to allow installing from your browser/file manager the first time.
 
-1. Create a new GitHub repo and upload everything in this folder (keep the `.github` folder).
-2. *(Recommended)* Put an Android-ARM `aapt2` binary at `toolchain/aapt2-arm64-v8a` — see [`toolchain/README.md`](toolchain/README.md).
-   If you skip this the Action tries to auto-download one, and if that fails you can import `aapt2` inside the app later.
-3. Open the **Actions** tab → *Build Buildora APK* → **Run workflow**. When it finishes download the
-   **Buildora-APK** artifact → `Buildora.apk`.
+**Requirements:** Android 8.0 (API 26) or newer, an ARM phone, ~300 MB free storage.
+On first launch allow **All files access** — projects are stored in shared storage so you can reach them from any file manager.
 
-> The APK is ~50 MB because it carries `android.jar`, the Java compiler, D8, JGit and apksig.
+## Quick start
 
-## How the app works
+1. Open Buildora and tap **＋ → New project**.
+2. Choose a name, package id, icon and template, then **Create**.
+3. In the IDE tap **▶ Run**. When the build finishes tap **Install** (or **Download**).
 
-| Screen | What you get |
-|---|---|
-| **Home** | List of your projects (name, package, version, date) · **＋** FAB · **⚙** settings (top right) |
-| **＋ menu** | **New project** · **Import project** · **Clone repo** |
-| **New project** | project name, app name, package id, app icon (+ corner radius slider, default = Buildora icon), min/target SDK (compile API auto), template, theme, orientation, version, internet permission |
-| **Code IDE** | ☰ explorer · ▶ run · undo · redo · save · ⋮ menu (all small icons) · open-file tabs in one line · full-screen editor |
-| **Explorer** | glass side panel, tree view, **＋** create file/folder, **⬇** import, long-press menus (file & folder) |
-| **Run ▶** | live progress dialog → on success **Download / Install / Share**, on failure **Copy all errors** + **Close** |
-| **Settings** | editor, build, signing keys (generate / import / export), toolchain, defaults, Git, storage |
+Projects live in `/storage/emulated/0/Buildora/<Project_Name>/` and the finished
+`<Project_Name>.apk` is placed right inside that folder.
 
-Projects live in `/storage/emulated/0/Buildora/<Project_Name>/` and the built `<Project_Name>.apk` is placed right inside that folder.
+## Features
 
-## Features (45)
+**Projects**
+- New project wizard (name, app name, package id, icon + corner radius, min/target SDK, theme, orientation)
+- 4 buildable templates: Empty Activity, Counter, WebView, AppCompat
+- Import any folder (Gradle-style layouts are detected, including dependencies from `build.gradle`)
+- Clone a Git repository
+- Rename, duplicate, export as ZIP, delete
 
-**Projects** 1 New-project wizard · 2 Import any folder (Gradle layouts auto-detected) · 3 Clone Git repo (name auto-filled) · 4 Four buildable templates (Empty, Counter, WebView, AppCompat) · 5 App icon picker + corner radius · 6 Gradle-compatible folder layout + `build.gradle` files · 7 Rename / duplicate / export-ZIP / delete / info · 8 Imports `applicationId`, SDKs, versions and dependencies from an existing `build.gradle`
+**Code IDE**
+- Syntax highlighting for Java, XML, JSON, Gradle, properties and Smali
+- Line numbers, open-file tabs, undo / redo, auto-save
+- Two-finger pinch zoom
+- Find &amp; replace (regex), go to line, code formatter
+- Auto-indent, auto-close brackets and XML tags, symbol bar
+- Live red error lines for XML / bracket mistakes, and compiler errors marked in the editor after a failed build
+- 6 colour schemes, custom fonts, light / dark app theme
 
-**Explorer** 9 Tree view · 10 Create file/folder (Java & layout files get a skeleton) · 11 Import file/folder · 12 Rename · 13 Delete · 14 Duplicate · 15 Move / change path · 16 Export copy / ZIP · 17 Properties · 18 Copy path · 19 Install / share any APK in the tree · 20 Glass blur panel (Android 12+)
+**File explorer**
+- Glass side panel with a tree view
+- Create / import files and folders
+- Long-press menus: rename, duplicate, move, export, delete, properties, copy path, install / share APKs
 
-**Editor** 21 Syntax highlighting (Java, XML, JSON, Gradle, properties, Smali) · 22 Line numbers · 23 Two-finger pinch zoom · 24 Undo / redo · 25 Open-file tabs · 26 Auto-save · 27 Find & replace (regex, case) · 28 Go to line · 29 Auto-indent · 30 Auto-close brackets & XML tags · 31 Live red error lines (XML + brackets) · 32 Compiler errors marked in the editor after a failed build · 33 Code formatter · 34 Symbol bar · 35 Image preview · 36 6 colour schemes · 37 Custom fonts
+**Build &amp; signing**
+- Fully on-device pipeline: ECJ → aapt2 → D8 → packager → apksig (v1 + v2 + v3)
+- Library manager: Maven resolver (Google Maven, Maven Central, JitPack), AAR support, a built-in catalog of popular libraries, custom coordinates and local `.jar` / `.aar` files
+- Generate, import and export signing keys; choose the active key
+- Live build log, copyable error report, install / download / share the APK
 
-**Build** 38 Full on-device pipeline · 39 Library manager (Maven resolver + AAR support, 48-library catalog, custom coordinates, local jar/aar) · 40 Manifest merge for libraries · 41 Dex cache for libraries · 42 Debug/release dex, auto version bump, clean · 43 Signing: generate / import / export keys, v1+v2+v3 · 44 Git commit / pull / push / status · 45 Toolchain manager (import / download aapt2, android.jar)
+**Git** — commit, pull, push and status (with a personal access token).
 
-## Project layout of this repo
+## Building Buildora from source
+
+Buildora is built by GitHub Actions — no local Android setup needed.
+
+1. Fork or upload this repository to GitHub.
+2. Make sure the Android-native `aapt2` binaries are in [`toolchain/`](toolchain/README.md)
+   (`aapt2-arm64-v8a`, optionally `aapt2-armeabi-v7a`).
+3. Open **Actions → Build Buildora APK → Run workflow**.
+4. Download the **Buildora-APK** artifact.
+
+The workflow installs JDK 17 and the Android SDK platform, bundles `android.jar` and `aapt2` into the
+app assets (`scripts/fetch_toolchain.py`), and runs `gradle :app:assembleDebug`.
+
+## Project structure
 
 ```
 app/src/main/java/com/tenix/buildora/
-  MainActivity, IdeActivity, SettingsActivity, KeystoreActivity, LibrariesActivity, BuildRunner
-  core/    Project, Templates, FileUtil, FilePicker, IconUtil, Prefs, UI, Installer, Perm, Net
-  editor/  CodeEditText, Highlighter, Linter, EditorScheme
-  build/   BuildEngine, Toolchain, MavenResolver, ManifestMerger, ApkBuilder, Signer, KeyTool, Keystores, GitHelper, Catalog
-.github/workflows/build.yml      CI
-scripts/fetch_toolchain.py       bundles android.jar + aapt2 into the APK assets
-toolchain/                       (optional) drop your aapt2 binaries here
+  MainActivity · IdeActivity · SettingsActivity · KeystoreActivity · LibrariesActivity · BuildRunner
+  core/    projects, templates, file picker, icons, preferences, installer
+  editor/  code editor view, highlighter, linter, colour schemes
+  build/   build engine, toolchain, Maven resolver, manifest merger, APK writer, signer, Git helper
+app/src/main/java/javax/lang/model/   SourceVersion shim (Android has no javax.lang.model; ECJ needs it)
+.github/workflows/build.yml           CI
+scripts/fetch_toolchain.py            bundles android.jar + aapt2 into the APK
+toolchain/                            Android-native aapt2 binaries
 ```
 
-## Design decisions & honest notes
+## Good to know
 
-* **`targetSdk 28` on purpose.** Android 10+ forbids executing files from app storage for newer targets, and `aapt2`
-  must be executed. 28 also gives plain `java.io.File` access to `/storage/emulated/0/Buildora` (with "All files access").
-* **Only Java + XML projects** are compiled (as requested). Kotlin libraries work as *dependencies* (their bytecode is dexed) but Kotlin sources are not compiled.
-* **The Java language level is 1.8** (lambdas and method refs are supported via D8 desugaring).
-* **Libraries:** AARs are extracted, their resources are linked with the app and their `R` classes generated (`--extra-packages`);
-  manifests are merged with a simplified merger (permissions + components + `${applicationId}` placeholders).
-  Big stacks such as AppCompat/Material are supported but are the most likely place to hit edge cases.
-* Keystore passwords are stored in the app's private preferences.
-* Annotation processors (Room, Dagger, …) are not run.
+- **Java 8 + XML projects.** Buildora compiles Java sources at language level 1.8 (lambdas and method references work).
+  Kotlin *libraries* can be used as dependencies, but Kotlin source files are not compiled.
+- **No annotation processors** (Room, Dagger, …) yet.
+- **`targetSdk` is 28 on purpose.** Android 10+ blocks executing binaries from app storage for newer targets, and
+  Buildora has to run `aapt2`. It also keeps plain file access to `/storage/emulated/0/Buildora`.
+- Large library stacks (AppCompat, Material, …) use a simplified manifest merger and are the most likely place to hit edge cases.
+- Signing-key passwords are stored in the app's private preferences.
+- Builds run on-device, so heavy projects need RAM; the first build with libraries is slower (dex results are cached).
 
-## Verification status — please read
+## Troubleshooting
 
-I could not run Gradle, an Android emulator or a phone in the environment this was written in, so:
+| Problem | Fix |
+|---|---|
+| *aapt2 cannot run* | Put the right-architecture binary in `toolchain/`, or use **Settings → Toolchain → Import aapt2** |
+| Build error | Tap **Copy all** in the error dialog and open an issue with the text |
+| Can't see projects / save fails | Grant **All files access** in Android settings |
+| Dependency download fails | Check your internet connection, or remove the library in **Libraries** |
 
-* ✅ All Java compiles with `javac` against the real API 34 `android.jar` (third-party APIs were checked against stubs of their public API).
-* ✅ The self-signed-certificate generator, the aligned APK zip writer and the Maven resolver were executed and tested on a JVM
-  (certificate verifies, `resources.arsc` and `.so` alignment correct, version ranges / properties / scopes resolved).
-* ✅ All XML resources are well-formed and every `R.*` reference resolves.
-* ⚠️ **Not run:** the Gradle/AGP build itself, the aapt2 resource step, ECJ and D8 *on a device*, and the apksig call.
-  Those are standard APIs used the standard way, but expect to fix a small thing or two on first run.
-  If the Action fails, open the failing step's log and send it to me — it is usually a one-line fix
-  (e.g. a dependency version). If a build fails *inside the app*, the error dialog has **Copy all**.
+## Contributing
+
+Issues and pull requests are welcome. Please include your Android version, device architecture and the copied build
+log when reporting a build problem.
+
+## Third-party components
+
+Buildora bundles open-source software, each under its own license: the Eclipse Compiler for Java (ECJ),
+R8/D8, apksig, Eclipse JGit, SLF4J, AndroidX, the Android SDK `android.jar` and `aapt2`.
+Please see each project for its license terms.
+
+## License
+
+Buildora's own source code is released under the [MIT License](LICENSE).
