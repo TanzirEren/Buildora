@@ -401,12 +401,11 @@ public final class BuildEngine {
         List<String> args = new ArrayList<>();
         args.addAll(Arrays.asList("-1.8", "-encoding", "UTF-8", "-nowarn", "-proc:none", "-g",
                 "-bootclasspath", androidJar.getPath()));
-        if (!libs.jars.isEmpty()) {
-            List<String> cp = new ArrayList<>();
-            for (File f : libs.jars) cp.add(f.getPath());
-            args.add("-classpath");
-            args.add(join(cp, File.pathSeparator));
-        }
+        List<String> cp = new ArrayList<>();
+        cp.add(Toolchain.lambdaStubs(ctx).getPath());   // LambdaMetafactory stub: needed for lambdas / method references
+        for (File f : libs.jars) cp.add(f.getPath());
+        args.add("-classpath");
+        args.add(join(cp, File.pathSeparator));
         args.add("-d");
         args.add(classes.getPath());
         for (File jd : p.javaDirs) args.add(jd.getPath());
