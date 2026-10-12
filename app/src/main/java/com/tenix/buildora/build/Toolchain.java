@@ -32,6 +32,25 @@ public final class Toolchain {
     public static File aapt2(Context c) { return new File(dir(c), "aapt2"); }
     public static File androidJar(Context c) { return new File(dir(c), "android.jar"); }
 
+    /**
+     * Compile-time stub for java.lang.invoke.LambdaMetafactory (the Android SDK ships the same thing as
+     * core-lambda-stubs.jar). android.jar does not contain it, so ECJ cannot compile lambdas / method
+     * references without it. D8 desugars the invokedynamic calls later, so it is never packaged.
+     */
+    public static File lambdaStubs(Context c) { return new File(dir(c), "core-lambda-stubs.jar"); }
+
+    private static final String LAMBDA_STUBS_B64 =
+            "UEsDBBQAAAAIAAAAIVBi5jaZygEAAPUDAAAoAAAAamF2YS9sYW5nL2ludm9rZS9MYW1iZGFNZXRhZmFjdG9yeS5jbGFzc7VTXU8TQRQ9ty1dKKV8yZcKKJEEeLDxyYcSk1IW3LhA0iU84IOZtiMsbGeb3WkDf8DEf4NPJj74Awy/iXCnBFmpICExm+yde+ac3Dt3zvy6+PETwFss5JBC2kImjz5kCSNHoiOKgVAHxZ3akaxrQnbVV75+R0gvLe9Z6Ccs3JB81QmPZdEVzVpDbEktPou6DqNTwuiGW9785NlVp+w6++U11yaQQxiqhCrWQuk9EbRlmrsgQr5L3ipXP9hVz2Cpa2yt6qxv2l0sQ8hUwoYkDLu+ktvtZk1Gu6IWMDLYTNY+X3J7WuTmDsPGe6EagYxfuWF43G6VEjRPR746KN0l3D1tycdtXpW8X7vcu1sRQeD5WpYIOfukLlva58FZmCKs3DF/nmxHRjHzfgsIBRHoPy7my38azkf3tnf+dSwvbEd1ueGbC5zssdBro2UbOErJqBKIOJZ8/DnC4oPat/CCMHc/lc19RcYbWPwQgDRmMIAc2FHGhchzPpTIC5wPJ/IRVqTM02FklJFZjsSxb+U76JsxN8b4n+2CA/yN4wkLDPUpY9mu1c9u8QqYMHbn9SS+YppL3igyf1WMJxQp5pnWnuE5R9PqLObxEjOXUEsBAhQDFAAAAAgAAAAhUGLmNpnKAQAA9QMAACgAAAAAAAAAAAAAAIABAAAAAGphdmEvbGFuZy9pbnZva2UvTGFtYmRhTWV0YWZhY3RvcnkuY2xhc3NQSwUGAAAAAAEAAQBWAAAAEAIAAAAA";
+
+    private static void writeLambdaStubs(Context c) throws IOException {
+        File f = lambdaStubs(c);
+        if (f.isFile() && f.length() > 0) return;
+        byte[] data = android.util.Base64.decode(LAMBDA_STUBS_B64, android.util.Base64.DEFAULT);
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(f)) {
+            out.write(data);
+        }
+    }
+
     private static int appVersion(Context c) {
         try {
             PackageInfo pi = c.getPackageManager().getPackageInfo(c.getPackageName(), 0);
@@ -77,6 +96,7 @@ public final class Toolchain {
                 FileUtil.copyStreamToFile(in, jar);
             }
         }
+        writeLambdaStubs(c);
         if (aapt.exists()) {
             aapt.setReadable(true, false);
             aapt.setExecutable(true, false);
