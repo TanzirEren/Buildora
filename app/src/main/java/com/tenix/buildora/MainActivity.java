@@ -29,6 +29,7 @@ import android.widget.TextView;
 
 import com.tenix.buildora.build.GitHelper;
 import com.tenix.buildora.core.FileUtil;
+import com.tenix.buildora.core.GalleryPicker;
 import com.tenix.buildora.core.FilePicker;
 import com.tenix.buildora.core.IconUtil;
 import com.tenix.buildora.core.Perm;
@@ -54,6 +55,9 @@ public class MainActivity extends BaseActivity {
     private final List<Project> projects = new ArrayList<>();
     private BaseAdapter adapter;
     private AlertDialog permDialog;
+    private static final int REQ_GALLERY = 301;
+    private interface IconCb { void onIcon(Bitmap b); }
+    private IconCb pendingIcon;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -94,6 +98,10 @@ public class MainActivity extends BaseActivity {
         findViewById(R.id.fabNew).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { fabMenu(); }
         });
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !Prefs.bool(this, "asked_notif", false)) {
+            Prefs.put(this, "asked_notif", true);
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 12);
+        }
         findViewById(R.id.ibSettings).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { startActivity(new Intent(MainActivity.this, SettingsActivity.class)); }
         });
@@ -121,6 +129,15 @@ public class MainActivity extends BaseActivity {
         permDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { Perm.requestStorage(MainActivity.this, REQ_STORAGE); }
         });
+    }
+
+    @Override protected void onActivityResult(int req, int res, android.content.Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == REQ_GALLERY && res == RESULT_OK && data != null && data.getData() != null && pendingIcon != null) {
+            Bitmap b = GalleryPicker.decode(this, data.getData(), 1024);
+            if (b == null) UI.toast(this, "Cannot read that image");
+            else pendingIcon.onIcon(b);
+        }
     }
 
     @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
@@ -273,8 +290,22 @@ public class MainActivity extends BaseActivity {
             @Override public void onStopTrackingTouch(SeekBar s) { }
         });
         updatePreview.run();
+        TextView gallery = UI.button(this, "Pick icon from Gallery", true);
+        form.addView(gallery);
+        gallery.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                pendingIcon = new IconCb() {
+                    @Override public void onIcon(Bitmap b) {
+                        iconBmp[0] = b;
+                        customIcon[0] = true;
+                        updatePreview.run();
+                    }
+                };
+                GalleryPicker.pick(MainActivity.this, REQ_GALLERY);
+            }
+        });
         LinearLayout iconBtns = UI.hbox(this);
-        TextView pick = UI.button(this, "Choose icon", false);
+        TextView pick = UI.button(this, "Choose from files", false);
         TextView reset = UI.button(this, "Use default", false);
         iconBtns.addView(pick, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         iconBtns.addView(reset, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));

@@ -31,6 +31,14 @@ public class Project {
     public long createdAt = System.currentTimeMillis();
     public List<String> dependencies = new ArrayList<>();
 
+    // v2: build types, flavors, modules
+    public List<BuildTypeCfg> buildTypes = new ArrayList<>();
+    public List<FlavorCfg> flavors = new ArrayList<>();
+    public String activeBuildType = "debug";
+    public String activeFlavor = "";
+    public List<ModuleCfg> modules = new ArrayList<>();       // extra modules (not the app)
+    public List<String> appModuleDeps = new ArrayList<>();    // names of modules the app depends on
+
     // layout (detected)
     public File srcRoot;
     public File manifestFile;
@@ -52,7 +60,48 @@ public class Project {
 
     public File configFile() { return new File(root, "buildora.json"); }
     public File workDir() { return new File(root, ".buildora"); }
-    public File apkFile() { return new File(root, name + ".apk"); }
+    public File apkFile() { return activeVariant().apkFile(this); }
+    public Variant activeVariant() { return Variant.resolve(this, activeBuildType, activeFlavor); }
+    public BuildTypeCfg findBuildType(String n) {
+        for (BuildTypeCfg b : buildTypes) if (b.name.equals(n)) return b;
+        return null;
+    }
+    public FlavorCfg findFlavor(String n) {
+        for (FlavorCfg f : flavors) if (f.name.equals(n)) return f;
+        return null;
+    }
+    public ModuleCfg findModule(String n) {
+        for (ModuleCfg m : modules) if (m.name.equals(n)) return m;
+        return null;
+    }
+    /** Directory of the app module (contains src/ and proguard-rules.pro). */
+    public File moduleDir() {
+        File d = srcRoot;
+        if (d != null && d.getName().equals("main") && d.getParentFile() != null && d.getParentFile().getParentFile() != null)
+            return d.getParentFile().getParentFile();
+        return srcRoot == null ? root : srcRoot;
+    }
+    public File proguardFile() { return new File(moduleDir(), "proguard-rules.pro"); }
+    /** Modules the app needs, dependencies first. */
+    public List<ModuleCfg> orderedModules() {
+        List<ModuleCfg> out = new ArrayList<>();
+        for (String n : appModuleDeps) visit(n, out, new ArrayList<String>());
+        return out;
+    }
+    private void visit(String n, List<ModuleCfg> out, List<String> stack) {
+        ModuleCfg m = findModule(n);
+        if (m == null || out.contains(m) || stack.contains(n)) return;
+        stack.add(n);
+        for (String d : m.moduleDeps) visit(d, out, stack);
+        stack.remove(n);
+        out.add(m);
+    }
+    public void ensureDefaults() {
+        if (buildTypes.isEmpty()) { buildTypes.add(BuildTypeCfg.debug()); buildTypes.add(BuildTypeCfg.release()); }
+        if (findBuildType(activeBuildType) == null) activeBuildType = buildTypes.get(0).name;
+        if (!activeFlavor.isEmpty() && findFlavor(activeFlavor) == null) activeFlavor = "";
+        for (ModuleCfg m : modules) m.detect(root);
+    }
     public File buildLog() { return new File(workDir(), "last-build.log"); }
 
     public File javaRoot() {
@@ -82,13 +131,25 @@ public class Project {
                 p.createdAt = o.optLong("createdAt", cfg.lastModified());
                 JSONArray deps = o.optJSONArray("dependencies");
                 if (deps != null) for (int i = 0; i < deps.length(); i++) p.dependencies.add(deps.getString(i));
+                JSONArray bts = o.optJSONArray("buildTypes");
+                if (bts != null) for (int i = 0; i < bts.length(); i++) p.buildTypes.add(BuildTypeCfg.fromJson(bts.getJSONObject(i)));
+                JSONArray fls = o.optJSONArray("flavors");
+                if (fls != null) for (int i = 0; i < fls.length(); i++) p.flavors.add(FlavorCfg.fromJson(fls.getJSONObject(i)));
+                JSONArray mods = o.optJSONArray("modules");
+                if (mods != null) for (int i = 0; i < mods.length(); i++) p.modules.add(ModuleCfg.fromJson(mods.getJSONObject(i)));
+                JSONArray amd = o.optJSONArray("appModuleDeps");
+                if (amd != null) for (int i = 0; i < amd.length(); i++) p.appModuleDeps.add(amd.getString(i));
+                p.activeBuildType = o.optString("activeBuildType", "debug");
+                p.activeFlavor = o.optString("activeFlavor", "");
                 parsed = true;
             } catch (IOException | JSONException ignored) { }
         }
         if (!parsed) {
             p.infer();
+            p.ensureDefaults();
             try { p.save(); } catch (IOException ignored) { }
         }
+        p.ensureDefaults();
         return p;
     }
 
@@ -107,6 +168,20 @@ public class Project {
             JSONArray deps = new JSONArray();
             for (String d : dependencies) deps.put(d);
             o.put("dependencies", deps);
+            JSONArray bts = new JSONArray();
+            for (BuildTypeCfg b : buildTypes) bts.put(b.toJson());
+            o.put("buildTypes", bts);
+            JSONArray fls = new JSONArray();
+            for (FlavorCfg f : flavors) fls.put(f.toJson());
+            o.put("flavors", fls);
+            JSONArray mods = new JSONArray();
+            for (ModuleCfg m : modules) mods.put(m.toJson());
+            o.put("modules", mods);
+            JSONArray amd = new JSONArray();
+            for (String n : appModuleDeps) amd.put(n);
+            o.put("appModuleDeps", amd);
+            o.put("activeBuildType", activeBuildType);
+            o.put("activeFlavor", activeFlavor);
             FileUtil.writeText(configFile(), o.toString(2));
         } catch (JSONException e) {
             throw new IOException(e);
@@ -218,6 +293,57 @@ public class Project {
             }
         } catch (IOException | RuntimeException ignored) { }
         if (targetSdk < minSdk) targetSdk = Math.max(minSdk, 34);
+        try { inferModules(); } catch (IOException | RuntimeException ignored) { }
+    }
+
+    /** Reads settings.gradle(.kts) include lines and the project(':x') dependencies of the app module. */
+    private void inferModules() throws IOException {
+        File sg = new File(root, "settings.gradle");
+        if (!sg.isFile()) sg = new File(root, "settings.gradle.kts");
+        if (!sg.isFile()) return;
+        String text = FileUtil.readText(sg);
+        Matcher inc = Pattern.compile("include\\s*\\(?([^\\n)]*)").matcher(text);
+        String appDir = moduleDir().getName();
+        List<String> names = new ArrayList<>();
+        while (inc.find()) {
+            Matcher n = Pattern.compile("[\"']:?([\\w\\-./]+)[\"']").matcher(inc.group(1));
+            while (n.find()) names.add(n.group(1).replace(':', '/'));
+        }
+        for (String n : names) {
+            if (n.equals(appDir) || modulesContains(n)) continue;
+            File dir = new File(root, n);
+            if (!dir.isDirectory()) continue;
+            String gradle = "";
+            for (String g : new String[]{"build.gradle", "build.gradle.kts"}) {
+                File gf = new File(dir, g);
+                if (gf.isFile()) { gradle = FileUtil.readText(gf); break; }
+            }
+            ModuleCfg m = new ModuleCfg();
+            m.name = n.replace('/', '_');
+            m.path = n;
+            m.type = gradle.contains("com.android.library") || new File(dir, "src/main/AndroidManifest.xml").isFile()
+                    ? ModuleCfg.LIBRARY : ModuleCfg.JAVA;
+            Matcher pm = Pattern.compile("project\\(\\s*[\"']:([\\w\\-./]+)[\"']\\s*\\)").matcher(gradle);
+            while (pm.find()) m.moduleDeps.add(pm.group(1).replace(':', '_').replace('/', '_'));
+            Matcher mm = Pattern.compile("(?m)^\\s*(?:implementation|api)\\s*\\(?\\s*[\"']([\\w.\\-]+:[\\w.\\-]+:[\\w.\\-]+)[\"']").matcher(gradle);
+            while (mm.find()) m.dependencies.add(mm.group(1));
+            modules.add(m);
+        }
+        // which modules does the app use?
+        for (File g : new File[]{new File(moduleDir(), "build.gradle"), new File(moduleDir(), "build.gradle.kts")}) {
+            if (!g.isFile()) continue;
+            Matcher pm = Pattern.compile("project\\(\\s*[\"']:([\\w\\-./]+)[\"']\\s*\\)").matcher(FileUtil.readText(g));
+            while (pm.find()) {
+                String n = pm.group(1).replace(':', '_').replace('/', '_');
+                if (findModule(n) != null && !appModuleDeps.contains(n)) appModuleDeps.add(n);
+            }
+            break;
+        }
+    }
+
+    private boolean modulesContains(String path) {
+        for (ModuleCfg m : modules) if (m.path.equals(path)) return true;
+        return false;
     }
 
     private String resolveString(String ref) {

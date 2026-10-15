@@ -76,29 +76,56 @@ public final class MavenResolver {
         ArrayDeque<String[]> queue = new ArrayDeque<>();
         for (String c : coords) {
             String[] p = c.trim().split(":");
-            if (p.length < 3) throw new IOException("Bad dependency (use group:artifact:version): " + c);
-            queue.add(new String[]{p[0], p[1], cleanVersion(p[2])});
+            if (p.length < 2) throw new IOException("Bad dependency (use group:artifact[:version]): " + c);
+            String v = p.length >= 3 ? cleanVersion(p[2]) : "+";
+            if (v.isEmpty() || v.equals("+") || v.equalsIgnoreCase("latest") || v.equalsIgnoreCase("latest.release")) {
+                String latest = latestVersion(p[0], p[1]);
+                if (latest == null) throw new IOException("Cannot find any version of " + p[0] + ":" + p[1]);
+                log.log("  ~ " + p[0] + ":" + p[1] + " -> latest stable " + latest);
+                v = latest;
+            }
+            queue.add(new String[]{p[0], p[1], v, "root"});
         }
+        String kotlinMax = null;
         while (!queue.isEmpty()) {
             String[] gav = queue.poll();
             String ga = gav[0] + ":" + gav[1];
+            boolean kotlin = ga.startsWith("org.jetbrains.kotlin:kotlin-stdlib");
+            if (kotlin && kotlinMax != null && compare(gav[2], kotlinMax) < 0) gav[2] = kotlinMax;   // keep stdlib artifacts aligned
             String cur = chosen.get(ga);
             if (cur != null && compare(cur, gav[2]) >= 0) continue;
             Pom pom;
             try {
                 pom = loadPom(gav[0], gav[1], gav[2]);
             } catch (IOException e) {
-                log.log("  ! skipping " + ga + ":" + gav[2] + " (" + e.getMessage() + ")");
-                continue;
+                String alt = gav[3].equals("root") ? latestVersion(gav[0], gav[1]) : null;
+                if (alt != null && !alt.equals(gav[2])) {
+                    log.log("  ~ " + ga + ":" + gav[2] + " not found, using " + alt);
+                    gav[2] = alt;
+                    try { pom = loadPom(gav[0], gav[1], gav[2]); }
+                    catch (IOException e2) { log.log("  ! skipping " + ga + " (" + e2.getMessage() + ")"); continue; }
+                } else {
+                    log.log("  ! skipping " + ga + ":" + gav[2] + " (" + e.getMessage() + ")");
+                    continue;
+                }
             }
             chosen.put(ga, gav[2]);
+            if (kotlin && (kotlinMax == null || compare(gav[2], kotlinMax) > 0)) {
+                kotlinMax = gav[2];
+                for (String other : new ArrayList<>(chosen.keySet())) {
+                    if (other.startsWith("org.jetbrains.kotlin:kotlin-stdlib") && compare(chosen.get(other), kotlinMax) < 0) {
+                        String[] o = other.split(":");
+                        queue.add(new String[]{o[0], o[1], kotlinMax, "align"});
+                    }
+                }
+            }
             for (Dep d : pom.deps) {
                 if (d.optional) continue;
                 String sc = d.scope == null ? "compile" : d.scope;
                 if (!sc.equals("compile") && !sc.equals("runtime")) continue;
                 if (d.type != null && d.type.equals("test-jar")) continue;
                 if (d.v == null || d.v.isEmpty() || d.v.contains("${")) continue;
-                queue.add(new String[]{d.g, d.a, cleanVersion(d.v)});
+                queue.add(new String[]{d.g, d.a, cleanVersion(d.v), "dep"});
             }
         }
         List<Artifact> out = new ArrayList<>();
@@ -108,6 +135,48 @@ public final class MavenResolver {
             if (a != null) out.add(a);
         }
         return out;
+    }
+
+    // ------------------------------------------------------------------ latest version
+
+    private static boolean isStable(String v) {
+        String l = v.toLowerCase();
+        return !(l.contains("alpha") || l.contains("beta") || l.contains("rc") || l.contains("snapshot")
+                || l.contains("dev") || l.contains("preview") || l.contains("-m") || l.contains("eap") || l.contains("canary"));
+    }
+
+    /** Highest stable version published for group:artifact (reads maven-metadata.xml, cached for 12 h). */
+    public String latestVersion(String g, String a) {
+        File f = new File(cache, ".metadata/" + g + "/" + a + ".xml");
+        boolean fresh = f.isFile() && f.length() > 0 && System.currentTimeMillis() - f.lastModified() < 12L * 3600 * 1000;
+        if (!fresh) {
+            String path = g.replace('.', '/') + "/" + a + "/maven-metadata.xml";
+            boolean got = false;
+            for (String repo : REPOS) {
+                try {
+                    if (Net.download(repo + path, f, null)) { got = true; break; }
+                } catch (IOException ignored) { }
+            }
+            if (!got && !f.isFile()) return null;
+        }
+        try {
+            DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+            Document doc = dbf.newDocumentBuilder().parse(f);
+            NodeList nl = doc.getElementsByTagName("version");
+            String best = null;
+            for (int i = 0; i < nl.getLength(); i++) {
+                String v = nl.item(i).getTextContent().trim();
+                if (v.isEmpty() || !isStable(v)) continue;
+                if (best == null || compare(v, best) > 0) best = v;
+            }
+            if (best == null) {
+                NodeList rel = doc.getElementsByTagName("release");
+                if (rel.getLength() > 0) best = rel.item(0).getTextContent().trim();
+            }
+            return best;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ artifacts

@@ -3,6 +3,7 @@ package com.tenix.buildora;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.net.Uri;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.RenderEffect;
@@ -36,6 +37,10 @@ import android.widget.TextView;
 
 import com.tenix.buildora.build.BuildEngine;
 import com.tenix.buildora.build.GitHelper;
+import com.tenix.buildora.build.ImportIndex;
+import com.tenix.buildora.build.Toolchain;
+import com.tenix.buildora.core.GalleryPicker;
+import com.tenix.buildora.core.Variant;
 import com.tenix.buildora.core.FileUtil;
 import com.tenix.buildora.core.FilePicker;
 import com.tenix.buildora.core.IconUtil;
@@ -103,6 +108,9 @@ public class IdeActivity extends BaseActivity {
     private BaseAdapter treeAdapter;
     private boolean explorerOpen;
     private boolean buildRunning;
+    private interface IconCb { void onIcon(Bitmap b); }
+    private IconCb pendingIcon;
+    private static final int REQ_GALLERY = 301;
     private String lintMessage = "";
     private final Map<String, Map<Integer, String>> buildErrors = new HashMap<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -126,7 +134,7 @@ public class IdeActivity extends BaseActivity {
         setupTopBar();
         applyEditorPrefs();
         rebuildTree();
-        tvTitle.setText(project.name);
+        updateTitle();
         tvExplorerTitle.setText(project.name);
         ProjectStore.touch(project);
         File main = new File(project.javaRoot(), project.packagePath() + "/MainActivity.java");
@@ -137,11 +145,31 @@ public class IdeActivity extends BaseActivity {
     @Override protected void onResume() {
         super.onResume();
         if (editor != null) applyEditorPrefs();
+        if (root != null) {
+            Project fresh = Project.load(root);
+            project = fresh;
+            updateTitle();
+            BuildRunner.attach(this, project);
+        }
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String r = intent.getStringExtra("root");
+        setIntent(intent);
+        if (r != null && root != null && !r.equals(root.getAbsolutePath())) recreate();   // notification for another project
     }
 
     @Override protected void onPause() {
         super.onPause();
         saveAll(false);
+        BuildRunner.detach(this);
+    }
+
+    private void updateTitle() {
+        Variant v = project.activeVariant();
+        boolean plain = project.flavors.isEmpty() && v.buildType.equals("debug");
+        tvTitle.setText(plain ? project.name : project.name + "  •  " + v.name);
     }
 
     @Override public void onBackPressed() {
@@ -200,7 +228,8 @@ public class IdeActivity extends BaseActivity {
         PopupMenu pm = new PopupMenu(this, anchor);
         Menu m = pm.getMenu();
         String[] items = {"Find & replace", "Go to line", "Format code", "Save all", "Close all files",
-                "Project settings", "App icon", "Libraries", "Signing keys",
+                "Build variants", "Modules", "Libraries", "ProGuard rules", "Export AAB (bundle)",
+                "Project settings", "App icon", "Signing keys",
                 "Git: status", "Git: commit", "Git: pull", "Git: push",
                 "Clean project", "Last build log", "Install built APK", "Settings"};
         for (int i = 0; i < items.length; i++) m.add(0, i, i, items[i]);
@@ -211,22 +240,33 @@ public class IdeActivity extends BaseActivity {
                 case 2: if (current != null && !current.image) { editor.formatDocument(); } break;
                 case 3: saveAll(true); break;
                 case 4: closeAllTabs(); break;
-                case 5: projectSettings(); break;
-                case 6: changeIcon(); break;
-                case 7: openLibraries(); break;
-                case 8: startActivity(new Intent(this, KeystoreActivity.class)); break;
-                case 9: gitStatus(); break;
-                case 10: gitCommit(); break;
-                case 11: gitPull(); break;
-                case 12: gitPush(); break;
-                case 13: cleanProject(); break;
-                case 14: showBuildLog(); break;
-                case 15: installBuilt(); break;
-                case 16: startActivity(new Intent(this, SettingsActivity.class)); break;
+                case 5: openScreen(VariantsActivity.class); break;
+                case 6: openScreen(ModulesActivity.class); break;
+                case 7: openScreen(LibrariesActivity.class); break;
+                case 8: openScreen(ProguardActivity.class); break;
+                case 9: runBuild(true); break;
+                case 10: projectSettings(); break;
+                case 11: changeIcon(); break;
+                case 12: startActivity(new Intent(this, KeystoreActivity.class)); break;
+                case 13: gitStatus(); break;
+                case 14: gitCommit(); break;
+                case 15: gitPull(); break;
+                case 16: gitPush(); break;
+                case 17: cleanProject(); break;
+                case 18: showBuildLog(); break;
+                case 19: installBuilt(); break;
+                case 20: startActivity(new Intent(this, SettingsActivity.class)); break;
             }
             return true;
         });
         pm.show();
+    }
+
+    private void openScreen(Class<?> c) {
+        saveAll(false);
+        Intent i = new Intent(this, c);
+        i.putExtra("root", root.getAbsolutePath());
+        startActivity(i);
     }
 
     // ------------------------------------------------------------------ editor setup
@@ -838,34 +878,77 @@ public class IdeActivity extends BaseActivity {
 
     // ------------------------------------------------------------------ build
 
-    private void runBuild() {
-        if (buildRunning) return;
+    private void runBuild() { runBuild(false); }
+
+    private void runBuild(boolean aab) {
+        if (BuildManager.get().isRunning()) { BuildRunner.attach(this, project); return; }
         saveAll(false);
-        buildRunning = true;
         hideKeyboard();
-        BuildRunner.run(this, project, r -> {
-            buildRunning = false;
-            buildErrors.clear();
-            if (!r.success) {
-                for (BuildEngine.Diag d : r.diags) {
-                    if (!d.error || d.file == null || d.line <= 0) continue;
-                    Map<Integer, String> m = buildErrors.get(d.file);
-                    if (m == null) { m = new HashMap<>(); buildErrors.put(d.file, m); }
-                    if (!m.containsKey(d.line)) m.put(d.line, d.message);
-                }
-                for (BuildEngine.Diag d : r.diags) {
-                    if (d.error && d.file != null && d.line > 0 && new File(d.file).isFile()) {
-                        openFile(new File(d.file));
-                        editor.gotoLine(d.line);
-                        break;
-                    }
-                }
+        project = Project.load(root);
+        BuildEngine.Options opt = new BuildEngine.Options();
+        opt.variant = project.activeVariant();
+        opt.aab = aab;
+        if (aab && opt.variant.debuggable) UI.toastLong(this, "Tip: export the bundle from a release variant (Build variants).");
+        BuildRunner.start(this, project, opt);
+    }
+
+    /** Called when a build (possibly finished while the app was in the background) delivers its result. */
+    void onBuildFinished(BuildEngine.Result r) {
+        buildErrors.clear();
+        if (!r.success) {
+            for (BuildEngine.Diag d : r.diags) {
+                if (!d.error || d.file == null || d.line <= 0) continue;
+                Map<Integer, String> m = buildErrors.get(d.file);
+                if (m == null) { m = new HashMap<>(); buildErrors.put(d.file, m); }
+                if (!m.containsKey(d.line)) m.put(d.line, d.message);
             }
-            if (current != null && !current.image) editor.setErrors(errorsFor(current.file));
-            project = Project.load(root);
-            refreshTree();
-            rebuildTree();
-        });
+        }
+        if (current != null && !current.image) editor.setErrors(errorsFor(current.file));
+        project = Project.load(root);
+        rebuildTree();
+    }
+
+    /** Opens a file and puts the caret on a line (used by the error list). */
+    void openFileAt(String path, int line) {
+        File f = new File(path);
+        if (!f.isFile()) return;
+        openFile(f);
+        final int ln = line;
+        if (ln > 0) editor.postDelayed(() -> editor.gotoLine(ln), 150);
+        if (explorerOpen) closeExplorer();
+    }
+
+    /** "Fix" button of a missing-import error: pick the class and add the import line. */
+    void fixMissingImport(final String path, final String simple) {
+        final List<String> cands = new ArrayList<>();
+        if (simple.equals("R")) cands.add(project.packageName + ".R");
+        List<File> dirs = new ArrayList<>(project.javaDirs);
+        cands.addAll(ImportIndex.candidates(Toolchain.androidJar(this), simple, dirs));
+        if (cands.isEmpty()) { UI.toast(this, "No class named " + simple + " found. Add the library in Libraries, or check the spelling."); return; }
+        if (cands.size() == 1) { applyImport(path, cands.get(0)); return; }
+        UI.dialog(this).setTitle("Import " + simple).setItems(cands.toArray(new String[0]), (d, w) -> applyImport(path, cands.get(w))).show();
+    }
+
+    private void applyImport(String path, String fqcn) {
+        File f = new File(path);
+        try {
+            OpenFile open = null;
+            for (OpenFile t : tabs) if (t.file.equals(f)) open = t;
+            if (open != null && open == current && !open.image) {
+                String old = editor.getText().toString();
+                String neu = ImportIndex.addImport(old, fqcn);
+                if (!neu.equals(old)) editor.replaceAll(neu);
+            } else if (open != null && open.text != null) {
+                open.text = ImportIndex.addImport(open.text, fqcn);
+                open.dirty = true;
+                saveTab(open, false);
+            } else {
+                FileUtil.writeText(f, ImportIndex.addImport(FileUtil.readText(f), fqcn));
+            }
+            UI.toast(this, "Added import " + fqcn);
+        } catch (Exception e) {
+            UI.toast(this, "Could not add import: " + e.getMessage());
+        }
     }
 
     // ------------------------------------------------------------------ project actions
@@ -961,10 +1044,16 @@ public class IdeActivity extends BaseActivity {
             @Override public void onStopTrackingTouch(SeekBar s) { }
         });
         upd.run();
-        TextView pick = UI.button(this, "Choose image…", false);
+        TextView gal = UI.button(this, "Pick from Gallery", true);
+        TextView pick = UI.button(this, "Choose from files…", false);
         TextView def = UI.button(this, "Use Buildora icon", false);
+        box.addView(gal);
         box.addView(pick);
         box.addView(def);
+        gal.setOnClickListener(v -> {
+            pendingIcon = bmp -> { bm[0] = bmp; upd.run(); };
+            GalleryPicker.pick(this, REQ_GALLERY);
+        });
         pick.setOnClickListener(v -> FilePicker.pickFile(this, "Choose icon image", android.os.Environment.getExternalStorageDirectory(),
                 new String[]{"png", "jpg", "jpeg", "webp"}, f -> {
                     Bitmap b2 = IconUtil.loadFile(f);
@@ -983,12 +1072,22 @@ public class IdeActivity extends BaseActivity {
                 }).show();
     }
 
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req == REQ_GALLERY && res == RESULT_OK && data != null && data.getData() != null && pendingIcon != null) {
+            Bitmap b = GalleryPicker.decode(this, data.getData(), 1024);
+            if (b == null) UI.toast(this, "Cannot read that image");
+            else pendingIcon.onIcon(b);
+        }
+    }
+
     private void cleanProject() {
         UI.dialog(this).setTitle("Clean project?").setMessage("Deletes intermediate build files and the built APK.")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Clean", (d, w) -> {
                     FileUtil.deleteRecursive(project.workDir());
                     project.apkFile().delete();
+                    FileUtil.deleteRecursive(new File(project.root, "outputs"));
                     buildErrors.clear();
                     if (current != null && !current.image) editor.setErrors(null);
                     rebuildTree();

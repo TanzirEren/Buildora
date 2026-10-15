@@ -114,6 +114,11 @@ public final class ApkBuilder implements Closeable {
 
     /** Add native libraries from an extracted AAR jni/ folder: lib/&lt;abi&gt;/x.so */
     public void addNativeLibs(File jniDir) throws IOException {
+        addNativeLibs(jniDir, 4096);
+    }
+
+    /** align: 4096, or 16384 for devices with 16 KB memory pages. */
+    public void addNativeLibs(File jniDir, int align) throws IOException {
         File[] abis = jniDir.listFiles();
         if (abis == null) return;
         for (File abi : abis) {
@@ -123,7 +128,7 @@ public final class ApkBuilder implements Closeable {
                 if (!so.getName().endsWith(".so")) continue;
                 byte[] data;
                 try (InputStream in = new java.io.FileInputStream(so)) { data = FileUtil.readAll(in); }
-                addStored("lib/" + abi.getName() + "/" + so.getName(), data, 4096);
+                addStored("lib/" + abi.getName() + "/" + so.getName(), data, align);
             }
         }
     }

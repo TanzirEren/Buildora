@@ -46,6 +46,7 @@ public final class ManifestMerger {
         }
         String pkg = root.getAttribute("package");
         if (pkg.isEmpty()) pkg = appPackage;
+        final String appId = appPackage;          // the applicationId (may differ from the manifest package)
 
         Set<String> have = new HashSet<>();
         collectKeys(root, app, pkg, have);
@@ -82,15 +83,55 @@ public final class ManifestMerger {
                 have.add(key);
                 Element imp = (Element) doc.importNode(e, true);
                 if (!name.isEmpty()) imp.setAttributeNS(ANDROID, "android:name", name);
-                clean(imp, pkg);
+                clean(imp, appId);
                 app.appendChild(imp);
             }
+        }
+        // the app's own manifest: ${applicationId} placeholders, and a different applicationId than the package
+        replacePlaceholders(root, appId);
+        if (!appId.equals(pkg)) {
+            expandNames(root, pkg);
+            root.setAttribute("package", appId);
         }
         Transformer t = TransformerFactory.newInstance().newTransformer();
         t.setOutputProperty(OutputKeys.INDENT, "yes");
         t.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
         out.getParentFile().mkdirs();
         t.transform(new DOMSource(doc), new StreamResult(out));
+    }
+
+    private static final String[] CLASS_TAGS = {"application", "activity", "activity-alias", "service", "receiver", "provider"};
+
+    /** Makes android:name of components absolute so the package attribute can be renamed safely. */
+    private static void expandNames(Element e, String pkg) {
+        if (contains(CLASS_TAGS, e.getTagName())) {
+            String[] attrs = {"name", "targetActivity", "backupAgent", "parentActivityName"};
+            for (String a : attrs) {
+                if (!e.hasAttributeNS(ANDROID, a)) continue;
+                String v = e.getAttributeNS(ANDROID, a);
+                String full = fullName(v, pkg);
+                if (!full.equals(v) && !v.isEmpty()) e.setAttributeNS(ANDROID, "android:" + a, full);
+            }
+        }
+        NodeList kids = e.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            Node k = kids.item(i);
+            if (k instanceof Element) expandNames((Element) k, pkg);
+        }
+    }
+
+    private static void replacePlaceholders(Element e, String appId) {
+        NamedNodeMap attrs = e.getAttributes();
+        for (int i = 0; i < attrs.getLength(); i++) {
+            Node a = attrs.item(i);
+            String v = a.getNodeValue();
+            if (v.contains("${")) a.setNodeValue(v.replace("${applicationId}", appId).replace("${packageName}", appId));
+        }
+        NodeList kids = e.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            Node k = kids.item(i);
+            if (k instanceof Element) replacePlaceholders((Element) k, appId);
+        }
     }
 
     /** Reads the package attribute of a manifest (used to generate library R classes). */

@@ -7,6 +7,8 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -14,12 +16,14 @@ import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import com.tenix.buildora.build.Catalog;
 import com.tenix.buildora.build.MavenResolver;
 import com.tenix.buildora.core.FileUtil;
 import com.tenix.buildora.core.FilePicker;
+import com.tenix.buildora.core.FormDialog;
 import com.tenix.buildora.core.Project;
 import com.tenix.buildora.core.UI;
 
@@ -27,8 +31,9 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
-/** Per-project library manager: Maven coordinates, built-in catalog, local .jar/.aar files. */
+/** Per-project library manager: catalog of 120+ libraries, Maven coordinates, local .jar/.aar files. */
 public class LibrariesActivity extends BaseActivity {
 
     private Project project;
@@ -60,8 +65,9 @@ public class LibrariesActivity extends BaseActivity {
         sv.addView(body);
         root.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        body.addView(UI.label(this, project.name + " • libraries are downloaded from Google Maven, Maven Central and JitPack, and compiled into your app on every build.", 12, true));
-        TextView cat = UI.button(this, "Add from catalog (" + Catalog.ALL.length + " libraries)", true);
+        body.addView(UI.label(this, project.name + " • libraries come from Google Maven, Maven Central and JitPack. Use '+' (or no version) for the latest stable release. "
+                + "Flavor-specific libraries are set in Variants.", 12, true));
+        TextView cat = UI.button(this, "Browse catalog (" + Catalog.ALL.length + " libraries)", true);
         TextView custom = UI.button(this, "Add Maven coordinate", false);
         TextView local = UI.button(this, "Import .jar / .aar file", false);
         TextView dl = UI.button(this, "Download all now", false);
@@ -105,6 +111,11 @@ public class LibrariesActivity extends BaseActivity {
         try { project.save(); } catch (Exception e) { UI.toast(this, e.getMessage()); }
     }
 
+    private static String ga(String coord) {
+        String[] p = coord.trim().split(":");
+        return p.length >= 2 ? p[0] + ":" + p[1] : coord;
+    }
+
     private void render() {
         depList.removeAllViews();
         if (project.dependencies.isEmpty()) depList.addView(UI.label(this, "No dependencies yet.", 13, true));
@@ -115,9 +126,10 @@ public class LibrariesActivity extends BaseActivity {
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.bottomMargin = UI.dp(this, 6);
             r.setLayoutParams(lp);
-            TextView t = UI.label(this, d, 13, false);
+            TextView t = UI.label(this, d.split(":").length < 3 ? d + ":+" : d, 13, false);
             t.setTypeface(Typeface.MONOSPACE);
             r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            r.setOnClickListener(v -> editVersion(d));
             ImageButton x = new ImageButton(this, null, 0, R.style.BIconBtn);
             x.setImageResource(R.drawable.ic_close);
             x.setOnClickListener(v -> { project.dependencies.remove(d); save(); render(); });
@@ -152,41 +164,63 @@ public class LibrariesActivity extends BaseActivity {
     }
 
     private boolean addDependency(String coord) {
-        String[] p = coord.trim().split(":");
-        if (p.length < 3) { UI.toast(this, "Use group:artifact:version"); return false; }
-        String ga = p[0] + ":" + p[1];
+        coord = coord.trim();
+        String[] p = coord.split(":");
+        if (p.length < 2) { UI.toast(this, "Use group:artifact or group:artifact:version"); return false; }
+        String key = ga(coord);
         for (int i = 0; i < project.dependencies.size(); i++) {
-            String[] q = project.dependencies.get(i).split(":");
-            if (q.length >= 2 && (q[0] + ":" + q[1]).equals(ga)) {
-                project.dependencies.set(i, coord.trim());
-                save();
-                render();
-                return true;
-            }
+            if (ga(project.dependencies.get(i)).equals(key)) { project.dependencies.set(i, coord); save(); render(); return true; }
         }
-        project.dependencies.add(coord.trim());
+        project.dependencies.add(coord);
         save();
         render();
         return true;
     }
 
+    private boolean isAdded(Catalog.Lib l) {
+        if (l.coords.length == 0) return false;
+        for (String c : l.coords) {
+            boolean has = false;
+            for (String d : project.dependencies) if (ga(d).equals(ga(c))) has = true;
+            if (!has) return false;
+        }
+        return true;
+    }
+
+    private void editVersion(final String dep) {
+        final String[] p = dep.split(":");
+        if (p.length < 2) return;
+        new FormDialog(this, ga(dep)).text("v", "Version (use + for latest stable)", p.length >= 3 ? p[2] : "+")
+                .show("Save", values -> {
+                    String v = String.valueOf(values.get("v")).trim();
+                    if (v.isEmpty()) v = "+";
+                    int i = project.dependencies.indexOf(dep);
+                    if (i >= 0) project.dependencies.set(i, p[0] + ":" + p[1] + ":" + v);
+                    save();
+                    render();
+                    return null;
+                });
+    }
+
     // ------------------------------------------------------------------ dialogs
 
     private void customDialog() {
-        final EditText e = UI.input(this, "group:artifact:version", "");
-        LinearLayout box = UI.vbox(this);
-        box.setPadding(UI.dp(this, 20), UI.dp(this, 4), UI.dp(this, 20), 0);
-        box.addView(e);
-        box.addView(UI.label(this, "Example: com.google.code.gson:gson:2.10.1", 11, true));
-        UI.dialog(this).setTitle("Add dependency").setView(box).setNegativeButton("Cancel", null)
-                .setPositiveButton("Add", (d, w) -> addDependency(e.getText().toString())).show();
+        new FormDialog(this, "Add dependency").text("c", "group:artifact:version", "")
+                .note("Example: com.google.code.gson:gson:2.10.1  •  version is optional: group:artifact means latest stable.")
+                .show("Add", values -> addDependency(String.valueOf(values.get("c"))) ? null : "Invalid coordinate");
     }
 
     private void catalogDialog() {
         LinearLayout box = UI.vbox(this);
         box.setPadding(UI.dp(this, 16), UI.dp(this, 4), UI.dp(this, 16), 0);
-        final EditText search = UI.input(this, "Search libraries…", "");
+        final EditText search = UI.input(this, "Search " + Catalog.ALL.length + " libraries…", "");
         box.addView(search);
+        final List<String> groups = new ArrayList<>();
+        groups.add("All groups");
+        for (String g : Catalog.GROUPS) groups.add(g);
+        final Spinner gs = new Spinner(this);
+        gs.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, groups));
+        box.addView(gs, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         final ListView lv = new ListView(this);
         lv.setDivider(null);
         box.addView(lv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(this, 380)));
@@ -199,21 +233,28 @@ public class LibrariesActivity extends BaseActivity {
                 Catalog.Lib l = shown.get(i);
                 LinearLayout r = UI.vbox(LibrariesActivity.this);
                 r.setPadding(UI.dp(LibrariesActivity.this, 6), UI.dp(LibrariesActivity.this, 9), UI.dp(LibrariesActivity.this, 6), UI.dp(LibrariesActivity.this, 9));
-                r.addView(UI.label(LibrariesActivity.this, l.name + "   · " + l.group, 15, false));
+                String badge = isAdded(l) ? "   ✓ added" : (l.status != Catalog.OK ? "   · " + Catalog.statusLabel(l.status) : "");
+                TextView name = UI.label(LibrariesActivity.this, l.name + badge, 15, false);
+                if (isAdded(l)) name.setTextColor(UI.color(LibrariesActivity.this, R.attr.bAccent));
+                r.addView(name);
                 r.addView(UI.label(LibrariesActivity.this, l.desc, 12, true));
-                TextView c = UI.label(LibrariesActivity.this, l.coord, 11, true);
-                c.setTypeface(Typeface.MONOSPACE);
-                r.addView(c);
+                if (l.coords.length > 0) {
+                    TextView c = UI.label(LibrariesActivity.this, l.coords.length == 1 ? l.coords[0] : l.coords[0] + "  (+" + (l.coords.length - 1) + " more)", 11, true);
+                    c.setTypeface(Typeface.MONOSPACE);
+                    r.addView(c);
+                }
                 return r;
             }
         };
         lv.setAdapter(ad);
         final Runnable filter = () -> {
             String q = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+            int gi = gs.getSelectedItemPosition();
             shown.clear();
             for (Catalog.Lib l : Catalog.ALL) {
-                if (q.isEmpty() || l.name.toLowerCase(Locale.ROOT).contains(q) || l.coord.toLowerCase(Locale.ROOT).contains(q)
-                        || l.group.toLowerCase(Locale.ROOT).contains(q) || l.desc.toLowerCase(Locale.ROOT).contains(q)) shown.add(l);
+                if (gi > 0 && !l.group.equals(Catalog.GROUPS[gi - 1])) continue;
+                String hay = (l.name + " " + l.desc + " " + l.group + " " + String.join(" ", l.coords)).toLowerCase(Locale.ROOT);
+                if (q.isEmpty() || hay.contains(q)) shown.add(l);
             }
             ad.notifyDataSetChanged();
         };
@@ -222,13 +263,38 @@ public class LibrariesActivity extends BaseActivity {
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void afterTextChanged(Editable e) { filter.run(); }
         });
+        gs.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> p, View v, int pos, long id) { filter.run(); }
+            @Override public void onNothingSelected(AdapterView<?> p) { }
+        });
         filter.run();
         final AlertDialog dlg = UI.dialog(this).setTitle("Library catalog").setView(box).setNegativeButton("Close", null).create();
         lv.setOnItemClickListener((p, v, pos, id) -> {
             Catalog.Lib l = shown.get(pos);
-            if (addDependency(l.coord)) UI.toast(this, "Added " + l.name);
+            pick(l, ad);
         });
         dlg.show();
+    }
+
+    private void pick(final Catalog.Lib l, final BaseAdapter ad) {
+        if (!l.addable()) {
+            AlertDialog.Builder b = UI.dialog(this).setTitle(l.name).setMessage(l.note).setPositiveButton("OK", null);
+            if (l.status == Catalog.MANUAL) b.setNeutralButton("Import .jar / .aar", (d, w) -> importLocal());
+            b.show();
+            return;
+        }
+        Runnable add = () -> {
+            for (String c : l.coords) addDependency(c);
+            UI.toast(this, "Added " + l.name);
+            ad.notifyDataSetChanged();
+        };
+        if (l.status == Catalog.PROCESSOR) {
+            UI.dialog(this).setTitle(l.name).setMessage(l.note + "\n\nAdd it anyway?").setNegativeButton("Cancel", null)
+                    .setPositiveButton("Add", (d, w) -> add.run()).show();
+        } else {
+            add.run();
+            if (!l.note.isEmpty()) UI.toastLong(this, l.note);
+        }
     }
 
     private void importLocal() {

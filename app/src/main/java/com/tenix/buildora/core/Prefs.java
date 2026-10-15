@@ -32,6 +32,10 @@ public final class Prefs {
     public static final String AUTO_VERSION = "build_auto_version";
     public static final String DEX_RELEASE = "build_dex_release";
     public static final String VERBOSE_LOG = "build_verbose";
+    public static final String INCREMENTAL = "build_incremental";
+    public static final String VERIFY_SIG = "build_verify_sig";
+    public static final String ALIGN_16K = "build_align_16k";
+    public static final String NOTIFY = "build_notify";
     public static final String KEYSTORE_ID = "keystore_active";
     public static final String KEYSTORES = "keystores_json";
 

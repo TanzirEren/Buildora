@@ -310,6 +310,8 @@ public final class Templates {
                 "- Min SDK " + o.minSdk + " / Target SDK " + o.targetSdk));
 
         p.detectLayout();
+        FileUtil.writeText(p.proguardFile(), ProguardPresets.FILE_HEADER);
+        p.ensureDefaults();
         p.save();
         return p;
     }

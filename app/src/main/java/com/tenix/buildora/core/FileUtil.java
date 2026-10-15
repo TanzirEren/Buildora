@@ -75,6 +75,11 @@ public final class FileUtil {
         }
     }
 
+    /** Like copy(), but never throws: used to merge asset folders. */
+    public static void copyQuiet(File src, File dst) {
+        try { copy(src, dst); } catch (IOException ignored) { }
+    }
+
     public static boolean deleteRecursive(File f) {
         if (f == null || !f.exists()) return true;
         if (f.isDirectory() && !isSymlink(f)) {

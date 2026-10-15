@@ -203,7 +203,10 @@ public class SettingsActivity extends BaseActivity {
         switchRow("Confirm before deleting", null, Prefs.CONFIRM_DELETE, true, null);
 
         section("Build");
-        switchRow("Debuggable APK", "Adds android:debuggable=true", Prefs.DEBUGGABLE, true, null);
+        switchRow("Incremental builds", "Reuse compiled resources and only recompile changed Java files", Prefs.INCREMENTAL, true, null);
+        switchRow("Build notification", "Show progress and the result in the notification bar", Prefs.NOTIFY, true, null);
+        switchRow("Verify signature after build", "Checks the v2/v3 signature of every APK", Prefs.VERIFY_SIG, true, null);
+        switchRow("Align native libraries to 16 KB", "Needed for devices with 16 KB memory pages (Android 15+)", Prefs.ALIGN_16K, true, null);
         switchRow("Delete intermediate files after build", "Saves storage (.buildora/build)", Prefs.CLEAN_BEFORE, true, null);
         switchRow("Keep screen on while building", null, Prefs.KEEP_AWAKE, true, null);
         switchRow("Install automatically after build", "Opens the installer when the APK is ready", Prefs.AUTO_INSTALL, false, null);
@@ -228,6 +231,12 @@ public class SettingsActivity extends BaseActivity {
                 }));
         actionRow("Reset toolchain to bundled", "Re-extract the tools shipped inside Buildora", () -> {
             try { Toolchain.resetToBundled(this); UI.toast(this, "Toolchain reset"); } catch (Exception e) { UI.toast(this, e.getMessage()); }
+        });
+        actionRow("Clear incremental build cache", "Forces the next build of every project to compile everything", () -> {
+            new Thread(() -> {
+                for (com.tenix.buildora.core.Project pr : com.tenix.buildora.core.ProjectStore.list()) FileUtil.deleteRecursive(new File(pr.workDir(), "cache"));
+                runOnUiThread(() -> UI.toast(this, "Build caches cleared"));
+            }).start();
         });
         actionRow("Clear dependency cache", "Deletes downloaded libraries and dex caches", () -> UI.dialog(this)
                 .setTitle("Clear caches?").setMessage("Downloaded libraries will be fetched again on the next build.")
@@ -254,7 +263,7 @@ public class SettingsActivity extends BaseActivity {
         actionRow("Storage permission", Perm.hasStorage(this) ? "Granted" : "Not granted - tap to allow", () -> Perm.requestStorage(this, 21));
 
         section("About");
-        actionRow("Buildora 1.0.0", "On-device Java & XML app builder • by TENIx", () -> { });
+        actionRow("Buildora 2.0.0", "On-device Java & XML app builder • by TENIx", () -> { });
 
         scroll.post(() -> scroll.scrollTo(0, sy));
     }
