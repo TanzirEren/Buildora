@@ -26,6 +26,8 @@ public final class AndroidBuildEnv implements BuildEnv {
     @Override public boolean autoVersion() { return Prefs.bool(ctx, Prefs.AUTO_VERSION, false); }
     @Override public boolean dexRelease() { return Prefs.bool(ctx, Prefs.DEX_RELEASE, false); }
     @Override public boolean verifySignature() { return Prefs.bool(ctx, Prefs.VERIFY_SIG, true); }
+    @Override public boolean crashReports() { return Prefs.bool(ctx, Prefs.CRASH_REPORTS, true); }
+    @Override public boolean autoLibraries() { return Prefs.bool(ctx, Prefs.AUTO_LIBS, true); }
     @Override public int nativeAlign() { return Prefs.bool(ctx, Prefs.ALIGN_16K, true) ? 16384 : 4096; }
 
     @Override public Signer.Key signingKey(String keyId) throws Exception {

@@ -181,6 +181,7 @@ public class SettingsActivity extends BaseActivity {
         choiceRow("App theme", Prefs.THEME, new String[]{"Follow system", "Light", "Dark"}, 0, null);
 
         section("Code editor");
+        switchRow("Code completion", "Suggestions for Java and XML while you type (⌁ key forces it)", Prefs.COMPLETION, true, null);
         choiceRow("Color scheme", Prefs.SCHEME, EditorScheme.names(), dark ? 1 : 0, null);
         sliderRow("Font size", Prefs.FONT_SIZE, 8, 24, 12, " sp");
         choiceRow("Font family", Prefs.FONT_FAMILY, new String[]{"Monospace", "Sans-serif monospace", "Serif monospace", "Custom TTF file"}, 0, () -> {
@@ -203,6 +204,8 @@ public class SettingsActivity extends BaseActivity {
         switchRow("Confirm before deleting", null, Prefs.CONFIRM_DELETE, true, null);
 
         section("Build");
+        switchRow("Auto-detect libraries", "Add libraries your imports and layouts need before each build", Prefs.AUTO_LIBS, true, null);
+        switchRow("Crash reporter in debug builds", "Apps you build report crashes to Buildora > Logcat", Prefs.CRASH_REPORTS, true, null);
         switchRow("Incremental builds", "Reuse compiled resources and only recompile changed Java files", Prefs.INCREMENTAL, true, null);
         switchRow("Build notification", "Show progress and the result in the notification bar", Prefs.NOTIFY, true, null);
         switchRow("Verify signature after build", "Checks the v2/v3 signature of every APK", Prefs.VERIFY_SIG, true, null);
@@ -263,7 +266,7 @@ public class SettingsActivity extends BaseActivity {
         actionRow("Storage permission", Perm.hasStorage(this) ? "Granted" : "Not granted - tap to allow", () -> Perm.requestStorage(this, 21));
 
         section("About");
-        actionRow("Buildora 2.0.0", "On-device Java & XML app builder • by TENIx", () -> { });
+        actionRow("Buildora 2.1.0", "On-device Java & XML app builder • by TENIx", () -> { });
 
         scroll.post(() -> scroll.scrollTo(0, sy));
     }

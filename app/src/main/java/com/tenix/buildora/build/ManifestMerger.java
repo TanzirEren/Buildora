@@ -62,6 +62,7 @@ public final class ManifestMerger {
                 Node n = nl.item(i);
                 if (!(n instanceof Element)) continue;
                 Element e = (Element) n;
+                if (e.getTagName().equals("queries")) { mergeQueries(doc, root, app, e); continue; }
                 if (!contains(TOP, e.getTagName())) continue;
                 String key = e.getTagName() + "|" + e.getAttributeNS(ANDROID, "name");
                 if (have.contains(key)) continue;
@@ -140,6 +141,30 @@ public final class ManifestMerger {
             return parse(manifest).getDocumentElement().getAttribute("package");
         } catch (Exception e) {
             return "";
+        }
+    }
+
+    /** Adds the children of a library's &lt;queries&gt; to the app's own &lt;queries&gt; (or imports the element). */
+    private static void mergeQueries(Document doc, Element root, Element app, Element lib) {
+        Element mine = firstChild(root, "queries");
+        if (mine == null) {
+            Node imp = doc.importNode(lib, true);
+            root.insertBefore(imp, app);
+            return;
+        }
+        NodeList kids = lib.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            Node k = kids.item(i);
+            if (!(k instanceof Element)) continue;
+            Element ke = (Element) k;
+            boolean dup = false;
+            NodeList mk = mine.getChildNodes();
+            for (int j = 0; j < mk.getLength(); j++) {
+                Node m = mk.item(j);
+                if (m instanceof Element && ((Element) m).getTagName().equals(ke.getTagName())
+                        && ((Element) m).getAttributeNS(ANDROID, "name").equals(ke.getAttributeNS(ANDROID, "name"))) dup = true;
+            }
+            if (!dup) mine.appendChild(doc.importNode(ke, true));
         }
     }
 

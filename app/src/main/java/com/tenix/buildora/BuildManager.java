@@ -22,6 +22,7 @@ public final class BuildManager {
         void onStage(String stage, int percent);
         void onLog(String line);
         void onFinished(BuildEngine.Result result);
+        default void onDownload(String name, long done, long total, int filesDone) { }
     }
 
     private static final BuildManager INSTANCE = new BuildManager();
@@ -105,6 +106,12 @@ public final class BuildManager {
         synchronized (this) { stage = s; percent = pc; }
         main.post(new Runnable() {
             @Override public void run() { for (Listener l : listeners) l.onStage(s, pc); }
+        });
+    }
+
+    void postDownload(final String name, final long done, final long total, final int files) {
+        main.post(new Runnable() {
+            @Override public void run() { for (Listener l : listeners) l.onDownload(name, done, total, files); }
         });
     }
 

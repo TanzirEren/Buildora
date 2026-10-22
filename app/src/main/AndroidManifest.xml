@@ -10,6 +10,7 @@
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -49,6 +50,16 @@
             android:windowSoftInputMode="adjustResize" />
 
         <service android:name=".BuildService" android:exported="false" />
+
+        <activity android:name=".LogcatActivity" android:exported="false" />
+        <activity android:name=".PreviewActivity" android:exported="false" />
+        <activity android:name=".DocPreviewActivity" android:exported="false" />
+
+        <receiver android:name=".CrashReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="com.tenix.buildora.CRASH" />
+            </intent-filter>
+        </receiver>
         <activity android:name=".KeystoreActivity" android:exported="false" />
         <activity android:name=".LibrariesActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />

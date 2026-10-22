@@ -46,6 +46,8 @@ public final class BuildEngine {
     public interface Listener {
         void onStage(String stage, int percent);
         void onLog(String line);
+        /** A library file is being downloaded. */
+        default void onDownload(String name, long done, long total, int filesDone) { }
     }
 
     public static final class Diag {
@@ -61,6 +63,8 @@ public final class BuildEngine {
     public static final class Options {
         public Variant variant;
         public boolean aab;
+        /** Only compile + link resources (for the layout preview) and stop. */
+        public boolean previewOnly;
     }
 
     public static final class Result {
@@ -215,6 +219,7 @@ public final class BuildEngine {
             log("  source set " + sd.getName());
         }
         deps.addAll(v.extraDependencies);
+        if (env.autoLibraries()) autoAddLibraries(javaDirs, resDirs, deps);
         File gsJson = GoogleServices.find(p.moduleDir(), p.root);
         File proguardFile = p.proguardFile();
 
@@ -230,7 +235,7 @@ public final class BuildEngine {
         // ---------------- nothing changed since the last successful build?
         String overall = overallFingerprint(v, javaDirs, resDirs, assetDirs, overlayManifests, deps, gsJson, proguardFile);
         File overallFile = new File(cacheV, opt.aab ? "overall-aab.fp" : "overall-apk.fp");
-        if (env.incremental() && !freshCache && out.isFile() && overallFile.isFile()) {
+        if (!opt.previewOnly && env.incremental() && !freshCache && out.isFile() && overallFile.isFile()) {
             try {
                 if (FileUtil.readText(overallFile).equals(overall)) {
                     log("Nothing changed since the last build - up to date.");
@@ -273,6 +278,14 @@ public final class BuildEngine {
         File manifest = new File(b, "AndroidManifest.xml");
         List<File> allManifests = new ArrayList<>(libs.manifests);
         allManifests.addAll(overlayManifests);
+        final boolean crashHook = v.debuggable && env.crashReports() && !opt.aab && !opt.previewOnly;
+        if (crashHook) {
+            try {
+                File cm = new File(b, "crash-manifest.xml");
+                CrashHookGen.writeManifest(cm);
+                allManifests.add(cm);
+            } catch (IOException e) { throw new BuildException("Crash reporter: " + e.getMessage()); }
+        }
         try {
             ManifestMerger.merge(p.manifestFile, allManifests, v.applicationId, manifest);
         } catch (Exception e) {
@@ -331,12 +344,25 @@ public final class BuildEngine {
         }
         aapt(link, true);
         check();
+        if (opt.previewOnly) {
+            File prev = new File(work, "preview/" + v.name + ".apk");
+            try { FileUtil.copyFile(apRes, prev); } catch (IOException e) { throw new BuildException("Preview: " + e.getMessage()); }
+            log("Layout preview resources ready: " + prev.getName());
+            stage("Done", 100);
+            r.success = true;
+            r.apk = prev;
+            return;
+        }
 
         // ---------------- BuildConfig
         boolean userBuildConfig = false;
         for (File jd : javaDirs) for (File f : FileUtil.listFiles(jd, "BuildConfig.java")) userBuildConfig = true;
         if (!userBuildConfig) {
             try { BuildConfigGen.generate(gen, origPkg, v); } catch (IOException e) { throw new BuildException("BuildConfig: " + e.getMessage()); }
+        }
+        if (crashHook) {
+            try { CrashHookGen.writeSource(gen); } catch (IOException e) { throw new BuildException("Crash reporter: " + e.getMessage()); }
+            log("Crash reporter added (debug build): crashes appear in Buildora > Logcat");
         }
 
         // ---------------- 4 Java (incremental)
@@ -462,6 +488,23 @@ public final class BuildEngine {
 
     // ------------------------------------------------------------------ libraries
 
+    /** Adds libraries the code needs (detected from imports / layout tags) to the project. */
+    private void autoAddLibraries(List<File> javaDirs, List<File> resDirs, Set<String> deps) {
+        List<LibraryDetector.Suggestion> sug = LibraryDetector.detect(javaDirs, resDirs, new ArrayList<>(deps));
+        boolean changed = false;
+        for (LibraryDetector.Suggestion s : sug) {
+            if (!s.auto()) {
+                log("Note: " + s.lib.name + " is used (" + s.reason + ") but " + s.lib.note);
+                continue;
+            }
+            for (String c : s.lib.coords) {
+                if (deps.add(c) && !p.dependencies.contains(c)) { p.dependencies.add(c); changed = true; }
+            }
+            log("Auto-added library: " + s.lib.name + "  (" + s.reason + ")");
+        }
+        if (changed) { try { p.save(); } catch (Throwable ignored) { } }
+    }
+
     private Libs resolveLibs(File work, List<File> libDirs, List<String> deps) throws BuildException {
         Libs libs = new Libs();
         try {
@@ -489,6 +532,11 @@ public final class BuildEngine {
                 log("Resolving " + deps.size() + " dependenc" + (deps.size() == 1 ? "y" : "ies") + "...");
                 MavenResolver mr = new MavenResolver(env.m2Dir(), new MavenResolver.Log() {
                     @Override public void log(String s) { BuildEngine.this.log(s); }
+                });
+                mr.setProgress(new MavenResolver.Progress() {
+                    @Override public void onProgress(String name, long done, long total, int filesDone) {
+                        if (listener != null) listener.onDownload(name, done, total, filesDone);
+                    }
                 });
                 for (MavenResolver.Artifact a : mr.resolve(deps)) {
                     if (a.aar) addAar(libs, a.extracted());

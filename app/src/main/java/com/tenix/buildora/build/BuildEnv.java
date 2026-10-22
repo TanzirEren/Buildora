@@ -19,6 +19,10 @@ public interface BuildEnv {
     boolean autoVersion();
     boolean dexRelease();
     boolean verifySignature();
+    /** Debug builds report crashes to Buildora. */
+    default boolean crashReports() { return true; }
+    /** Detect libraries from imports / layout tags and add them automatically. */
+    default boolean autoLibraries() { return true; }
     /** Alignment for native libraries: 4096 or 16384 (16 KB page size devices). */
     int nativeAlign();
 

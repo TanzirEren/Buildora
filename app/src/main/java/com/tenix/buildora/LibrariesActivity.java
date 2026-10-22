@@ -70,10 +70,12 @@ public class LibrariesActivity extends BaseActivity {
         TextView cat = UI.button(this, "Browse catalog (" + Catalog.ALL.length + " libraries)", true);
         TextView custom = UI.button(this, "Add Maven coordinate", false);
         TextView local = UI.button(this, "Import .jar / .aar file", false);
+        TextView detect = UI.button(this, "Detect libraries from my code", false);
         TextView dl = UI.button(this, "Download all now", false);
         body.addView(cat);
         body.addView(custom);
         body.addView(local);
+        body.addView(detect);
         body.addView(dl);
         body.addView(sectionLabel("Dependencies"));
         depList = UI.vbox(this);
@@ -88,6 +90,7 @@ public class LibrariesActivity extends BaseActivity {
         custom.setOnClickListener(v -> customDialog());
         local.setOnClickListener(v -> importLocal());
         dl.setOnClickListener(v -> downloadNow());
+        detect.setOnClickListener(v -> LibraryDetectDialog.show(this, project, this::render));
         render();
     }
 
@@ -310,33 +313,6 @@ public class LibrariesActivity extends BaseActivity {
     }
 
     private void downloadNow() {
-        if (project.dependencies.isEmpty()) { UI.toast(this, "Nothing to download"); return; }
-        LinearLayout box = UI.vbox(this);
-        box.setPadding(UI.dp(this, 20), UI.dp(this, 8), UI.dp(this, 20), 0);
-        box.addView(new ProgressBar(this));
-        final TextView log = new TextView(this);
-        log.setTypeface(Typeface.MONOSPACE);
-        log.setTextSize(10);
-        log.setTextColor(UI.color(this, R.attr.bTextDim));
-        final ScrollView sv = new ScrollView(this);
-        sv.addView(log);
-        box.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(this, 240)));
-        final AlertDialog dlg = UI.dialog(this).setTitle("Downloading libraries").setView(box).setPositiveButton("Close", null).create();
-        dlg.show();
-        final StringBuilder sb = new StringBuilder();
-        new Thread(() -> {
-            String result;
-            try {
-                MavenResolver r = new MavenResolver(new File(getFilesDir(), "m2"), s -> runOnUiThread(() -> {
-                    sb.append(s).append('\n');
-                    log.setText(sb);
-                    sv.post(() -> sv.fullScroll(View.FOCUS_DOWN));
-                }));
-                int n = r.resolve(project.dependencies).size();
-                result = "Done: " + n + " artifacts ready";
-            } catch (Exception e) { result = "Failed: " + e.getMessage(); }
-            final String res = result;
-            runOnUiThread(() -> { sb.append('\n').append(res); log.setText(sb); dlg.setTitle(res); });
-        }).start();
+        DownloadDialog.run(this, project.dependencies, null);
     }
 }

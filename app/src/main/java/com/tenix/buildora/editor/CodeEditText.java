@@ -16,6 +16,7 @@ import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
+import com.tenix.buildora.assist.Completion;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -46,6 +47,18 @@ public class CodeEditText extends EditText {
         final ArrayList<Edit> redo = new ArrayList<>();
         public void clear() { undo.clear(); redo.clear(); }
     }
+
+    /** Asks the host for suggestions at the caret; the host answers on the UI thread. */
+    public interface Completer {
+        void request(String text, int caret, boolean force, CompletionResult cb);
+    }
+    public interface CompletionResult { void onResult(java.util.List<Completion> items); }
+
+    private Completer completer;
+    private CompletionPopup popup;
+    private boolean completionEnabled = true;
+    private final Runnable completionRunnable = new Runnable() { @Override public void run() { triggerCompletion(false); } };
+    private long lastEditAt;
 
     private Listener listener;
     private UndoStack stack = new UndoStack();
@@ -124,6 +137,7 @@ public class CodeEditText extends EditText {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {
                 if (internalEdit) return;
                 capStart = start;
+                lastEditAt = android.os.SystemClock.uptimeMillis();
                 capRemoved = s.subSequence(start, start + count).toString();
             }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
@@ -137,6 +151,8 @@ public class CodeEditText extends EditText {
             @Override public void afterTextChanged(Editable e) {
                 if (internalEdit) return;
                 if (autoIndent || autoClose) smartEdit(e);
+                lastEditAt = android.os.SystemClock.uptimeMillis();
+                scheduleCompletion();
                 scheduleHighlight();
                 updateGutter();
                 if (listener != null) listener.onContentChanged();
@@ -205,6 +221,83 @@ public class CodeEditText extends EditText {
         updateGutter();
         rehighlight();
         if (liveLint) scheduleLint();
+    }
+
+    // ------------------------------------------------------------------ code completion
+
+    public void setCompleter(Completer c, CompletionPopup p) { completer = c; popup = p; }
+    public void setCompletionEnabled(boolean on) { completionEnabled = on; if (!on) dismissCompletion(); }
+    public void dismissCompletion() { handler.removeCallbacks(completionRunnable); if (popup != null) popup.dismiss(); }
+    public boolean completionShowing() { return popup != null && popup.isShowing(); }
+
+    private void scheduleCompletion() {
+        if (completer == null || !completionEnabled || internalEdit) return;
+        handler.removeCallbacks(completionRunnable);
+        String ins = lastInserted == null ? "" : lastInserted;
+        boolean trigger = ins.length() == 1 && (Character.isJavaIdentifierPart(ins.charAt(0)) || ".<:@/+_-\"".indexOf(ins.charAt(0)) >= 0);
+        boolean keepOpen = completionShowing() && capRemoved.length() == 1 && ins.isEmpty();   // backspace inside a word
+        if (trigger || keepOpen) handler.postDelayed(completionRunnable, 110);
+        else dismissCompletion();
+    }
+
+    /** Opens the suggestions now (also bound to the symbol-bar button). */
+    public void triggerCompletion(final boolean force) {
+        if (completer == null || (!completionEnabled && !force) || getLayout() == null) return;
+        if (getSelectionStart() != getSelectionEnd() || length() > 400000) { dismissCompletion(); return; }
+        final int caret = getSelectionStart();
+        final String text = getText().toString();
+        completer.request(text, caret, force, new CompletionResult() {
+            @Override public void onResult(java.util.List<Completion> items) {
+                if (getSelectionStart() != caret || popup == null) return;
+                popup.show(items);
+            }
+        });
+    }
+
+    /** Start of the word being completed (what an accepted suggestion replaces). */
+    public int completionStart() {
+        int caret = getSelectionStart();
+        Editable e = getText();
+        int p = caret;
+        boolean xml = lang.equals("xml");
+        while (p > 0) {
+            char c = e.charAt(p - 1);
+            if (Character.isJavaIdentifierPart(c) || (xml && ":@+/.-".indexOf(c) >= 0)) p--; else break;
+        }
+        if (xml && p < caret && e.charAt(p) == '/' && p > 0 && e.charAt(p - 1) == '<') p++;
+        return p;
+    }
+
+    /** Inserts a suggestion, moves the caret, and adds its import when needed. */
+    public void acceptCompletion(Completion c) {
+        int caret = getSelectionStart();
+        int start = completionStart();
+        Editable e = getText();
+        String insert = c.insert;
+        e.replace(start, caret, insert);
+        int pos = start + insert.length() - c.caretBack;
+        if (c.importFqcn != null && lang.equals("java")) {
+            String old = e.toString();
+            String neu = com.tenix.buildora.build.ImportIndex.addImport(old, c.importFqcn);
+            if (!neu.equals(old)) {
+                int d = neu.length() - old.length(), i = 0;
+                while (i < old.length() && old.charAt(i) == neu.charAt(i)) i++;
+                e.insert(i, neu.substring(i, i + d));
+                if (i <= pos) pos += d;
+            }
+        }
+        setSelection(Math.max(0, Math.min(pos, e.length())));
+    }
+
+    @Override public boolean onKeyDown(int keyCode, android.view.KeyEvent ev) {
+        if (completionShowing() && (keyCode == android.view.KeyEvent.KEYCODE_TAB || keyCode == android.view.KeyEvent.KEYCODE_ENTER) && popup.first() != null) {
+            Completion c = popup.first();
+            dismissCompletion();
+            acceptCompletion(c);
+            return true;
+        }
+        if (completionShowing() && keyCode == android.view.KeyEvent.KEYCODE_ESCAPE) { dismissCompletion(); return true; }
+        return super.onKeyDown(keyCode, ev);
     }
 
     // ------------------------------------------------------------------ errors
@@ -582,6 +675,7 @@ public class CodeEditText extends EditText {
 
     @Override protected void onSelectionChanged(int selStart, int selEnd) {
         super.onSelectionChanged(selStart, selEnd);
+        if (completionShowing() && android.os.SystemClock.uptimeMillis() - lastEditAt > 250) dismissCompletion();
         if (listener != null && getLayout() != null) listener.onCaretMoved(currentLine(), currentCol());
         invalidate();
     }

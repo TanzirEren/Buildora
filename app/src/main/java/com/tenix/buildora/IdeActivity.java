@@ -36,7 +36,14 @@ import android.widget.Spinner;
 import android.widget.TextView;
 
 import com.tenix.buildora.build.BuildEngine;
+import com.tenix.buildora.assist.Refactor;
+import com.tenix.buildora.assist.ResourceIndex;
+import com.tenix.buildora.build.Catalog;
 import com.tenix.buildora.build.GitHelper;
+import com.tenix.buildora.build.SourceIndex;
+import com.tenix.buildora.core.FormDialog;
+import com.tenix.buildora.core.ModuleCfg;
+import com.tenix.buildora.editor.CompletionPopup;
 import com.tenix.buildora.build.ImportIndex;
 import com.tenix.buildora.build.Toolchain;
 import com.tenix.buildora.core.GalleryPicker;
@@ -111,6 +118,8 @@ public class IdeActivity extends BaseActivity {
     private interface IconCb { void onIcon(Bitmap b); }
     private IconCb pendingIcon;
     private static final int REQ_GALLERY = 301;
+    private static final int REQ_PREVIEW = 302;
+    private View ibPreview;
     private String lintMessage = "";
     private final Map<String, Map<Integer, String>> buildErrors = new HashMap<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -198,6 +207,7 @@ public class IdeActivity extends BaseActivity {
         ibUndo = findViewById(R.id.ibUndo);
         ibRedo = findViewById(R.id.ibRedo);
         ibSave = findViewById(R.id.ibSave);
+        ibPreview = findViewById(R.id.ibPreview);
         etFind = findViewById(R.id.etFind);
         etReplace = findViewById(R.id.etReplace);
         tvCase = findViewById(R.id.tvCase);
@@ -209,6 +219,7 @@ public class IdeActivity extends BaseActivity {
     private void setupTopBar() {
         findViewById(R.id.ibMenu).setOnClickListener(v -> { if (explorerOpen) closeExplorer(); else openExplorer(); });
         findViewById(R.id.ibRun).setOnClickListener(v -> runBuild());
+        ibPreview.setOnClickListener(v -> previewCurrent());
         ibUndo.setOnClickListener(v -> { editor.undo(); refreshButtons(); });
         ibRedo.setOnClickListener(v -> { editor.redo(); refreshButtons(); });
         ibSave.setOnClickListener(v -> { saveAll(true); });
@@ -222,13 +233,15 @@ public class IdeActivity extends BaseActivity {
         boolean anyDirty = false;
         for (OpenFile t : tabs) if (t.dirty) anyDirty = true;
         ibSave.setAlpha(anyDirty ? 1f : 0.35f);
+        ibPreview.setVisibility(previewKind(current).isEmpty() ? View.GONE : View.VISIBLE);
     }
 
     private void showMoreMenu(View anchor) {
         PopupMenu pm = new PopupMenu(this, anchor);
         Menu m = pm.getMenu();
         String[] items = {"Find & replace", "Go to line", "Format code", "Save all", "Close all files",
-                "Build variants", "Modules", "Libraries", "ProGuard rules", "Export AAB (bundle)",
+                "Rename symbol", "Extract method", "Organize imports",
+                "Build variants", "Modules", "Libraries", "Detect libraries", "ProGuard rules", "Export AAB (bundle)", "Logcat",
                 "Project settings", "App icon", "Signing keys",
                 "Git: status", "Git: commit", "Git: pull", "Git: push",
                 "Clean project", "Last build log", "Install built APK", "Settings"};
@@ -240,22 +253,27 @@ public class IdeActivity extends BaseActivity {
                 case 2: if (current != null && !current.image) { editor.formatDocument(); } break;
                 case 3: saveAll(true); break;
                 case 4: closeAllTabs(); break;
-                case 5: openScreen(VariantsActivity.class); break;
-                case 6: openScreen(ModulesActivity.class); break;
-                case 7: openScreen(LibrariesActivity.class); break;
-                case 8: openScreen(ProguardActivity.class); break;
-                case 9: runBuild(true); break;
-                case 10: projectSettings(); break;
-                case 11: changeIcon(); break;
-                case 12: startActivity(new Intent(this, KeystoreActivity.class)); break;
-                case 13: gitStatus(); break;
-                case 14: gitCommit(); break;
-                case 15: gitPull(); break;
-                case 16: gitPush(); break;
-                case 17: cleanProject(); break;
-                case 18: showBuildLog(); break;
-                case 19: installBuilt(); break;
-                case 20: startActivity(new Intent(this, SettingsActivity.class)); break;
+                case 5: renameSymbol(); break;
+                case 6: extractMethodAction(); break;
+                case 7: organizeImportsAction(); break;
+                case 8: openScreen(VariantsActivity.class); break;
+                case 9: openScreen(ModulesActivity.class); break;
+                case 10: openScreen(LibrariesActivity.class); break;
+                case 11: saveAll(false); LibraryDetectDialog.show(this, project, null); break;
+                case 12: openScreen(ProguardActivity.class); break;
+                case 13: runBuild(true); break;
+                case 14: openLogcat(); break;
+                case 15: projectSettings(); break;
+                case 16: changeIcon(); break;
+                case 17: startActivity(new Intent(this, KeystoreActivity.class)); break;
+                case 18: gitStatus(); break;
+                case 19: gitCommit(); break;
+                case 20: gitPull(); break;
+                case 21: gitPush(); break;
+                case 22: cleanProject(); break;
+                case 23: showBuildLog(); break;
+                case 24: installBuilt(); break;
+                case 25: startActivity(new Intent(this, SettingsActivity.class)); break;
             }
             return true;
         });
@@ -290,6 +308,11 @@ public class IdeActivity extends BaseActivity {
             }
         });
         editor.setZoomListener(sp -> Prefs.put(this, Prefs.FONT_SIZE, sp));
+        final CompletionPopup popup = new CompletionPopup(this, editor, c -> editor.acceptCompletion(c));
+        editor.setCompleter((text, caret, force, cb) -> {
+            if (current == null || current.image) return;
+            CompletionEngine.request(this, project, current.file, text, caret, force, items -> cb.onResult(items));
+        }, popup);
     }
 
     private void updateStatus(int line, int col) {
@@ -320,6 +343,7 @@ public class IdeActivity extends BaseActivity {
         }
         editor.setTypeface(tf);
         symbolScroll.setVisibility(Prefs.bool(this, Prefs.SYMBOL_BAR, true) ? View.VISIBLE : View.GONE);
+        editor.setCompletionEnabled(Prefs.bool(this, Prefs.COMPLETION, true));
         if (current != null && !current.image) editor.rehighlight();
         refreshTree();
     }
@@ -327,7 +351,7 @@ public class IdeActivity extends BaseActivity {
     // ------------------------------------------------------------------ symbol bar
 
     private void setupSymbolBar() {
-        String[] keys = {"TAB", "←", "→", "{", "}", "(", ")", "[", "]", ";", "=", "\"", "'", "<", ">", "/", ":", ".", ",", "_",
+        String[] keys = {"⌁", "TAB", "←", "→", "{", "}", "(", ")", "[", "]", ";", "=", "\"", "'", "<", ">", "/", ":", ".", ",", "_",
                 "!", "&", "|", "+", "-", "*", "#", "@", "$", "?", "%", "\\"};
         for (final String k : keys) {
             TextView t = new TextView(this);
@@ -343,7 +367,8 @@ public class IdeActivity extends BaseActivity {
             t.setLayoutParams(lp);
             t.setOnClickListener(v -> {
                 if (current == null || current.image) return;
-                if (k.equals("TAB")) editor.insertTab();
+                if (k.equals("⌁")) editor.triggerCompletion(true);
+                else if (k.equals("TAB")) editor.insertTab();
                 else if (k.equals("←")) editor.setSelection(Math.max(0, editor.getSelectionStart() - 1));
                 else if (k.equals("→")) editor.setSelection(Math.min(editor.length(), editor.getSelectionEnd() + 1));
                 else editor.insertAtCursor(k);
@@ -748,6 +773,7 @@ public class IdeActivity extends BaseActivity {
     }
 
     private void switchTo(OpenFile t) {
+        editor.dismissCompletion();
         if (current != null && current != t) storeCurrentState();
         current = t;
         if (t.image) {
@@ -1072,7 +1098,211 @@ public class IdeActivity extends BaseActivity {
                 }).show();
     }
 
+    // ------------------------------------------------------------------ preview / logcat / library fix
+
+    private String previewKind(OpenFile t) {
+        if (t == null || t.image) return "";
+        String n = t.file.getName().toLowerCase();
+        if (n.endsWith(".md") || n.endsWith(".markdown")) return "md";
+        if (n.endsWith(".html") || n.endsWith(".htm")) return "html";
+        File par = t.file.getParentFile();
+        if (n.endsWith(".xml") && par != null && (par.getName().equals("layout") || par.getName().startsWith("layout-"))) return "layout";
+        return "";
+    }
+
+    private void previewCurrent() {
+        if (current == null) return;
+        String kind = previewKind(current);
+        if (kind.isEmpty()) return;
+        saveAll(false);
+        if (kind.equals("layout")) {
+            Intent i = new Intent(this, PreviewActivity.class);
+            i.putExtra("root", root.getAbsolutePath());
+            String n = current.file.getName();
+            i.putExtra("layout", n.substring(0, n.length() - 4));
+            startActivityForResult(i, REQ_PREVIEW);
+        } else {
+            Intent i = new Intent(this, DocPreviewActivity.class);
+            i.putExtra("path", current.file.getAbsolutePath());
+            startActivity(i);
+        }
+    }
+
+    private void openLogcat() {
+        Intent i = new Intent(this, LogcatActivity.class);
+        i.putExtra("package", project.activeVariant().applicationId);
+        startActivity(i);
+    }
+
+    /** "Fix" button of an unresolved-import error: add the library that provides the package. */
+    void addLibraryFix(Catalog.Lib lib) {
+        for (String c : lib.coords) {
+            String[] cp = c.split(":");
+            boolean has = false;
+            for (String d : project.dependencies) { String[] dp = d.split(":"); if (dp.length >= 2 && dp[0].equals(cp[0]) && dp[1].equals(cp[1])) has = true; }
+            if (!has) project.dependencies.add(c);
+        }
+        try { project.save(); } catch (Exception e) { UI.toast(this, e.getMessage()); }
+        UI.toast(this, "Added " + lib.name + ". Run again after the download.");
+        DownloadDialog.run(this, project.dependencies, null);
+    }
+
+    // ------------------------------------------------------------------ refactoring
+
+    private List<File> allJavaFiles() {
+        List<File> dirs = new ArrayList<>(project.javaDirs);
+        for (ModuleCfg m : project.orderedModules()) dirs.addAll(m.javaDirs);
+        Variant v = project.activeVariant();
+        for (File d : new File[]{v.flavorDir, v.typeDir}) if (d != null) dirs.add(new File(d, "java"));
+        List<File> out = new ArrayList<>();
+        for (File d : dirs) out.addAll(FileUtil.listFiles(d, ".java"));
+        return out;
+    }
+
+    private List<File> resDirsAll() {
+        List<File> out = new ArrayList<>();
+        if (project.resDir != null) out.add(project.resDir);
+        for (ModuleCfg m : project.orderedModules()) if (m.resDir != null) out.add(m.resDir);
+        Variant v = project.activeVariant();
+        for (File d : new File[]{v.flavorDir, v.typeDir}) if (d != null) out.add(new File(d, "res"));
+        return out;
+    }
+
+    private List<File> allXmlFiles() {
+        List<File> out = new ArrayList<>();
+        for (File r : resDirsAll()) out.addAll(FileUtil.listFiles(r, ".xml"));
+        if (project.manifestFile != null && project.manifestFile.isFile()) out.add(project.manifestFile);
+        for (ModuleCfg m : project.orderedModules()) if (m.manifestFile != null && m.manifestFile.isFile()) out.add(m.manifestFile);
+        return out;
+    }
+
+    private void organizeImportsAction() {
+        if (current == null || current.image || !current.lang.equals("java")) { UI.toast(this, "Open a Java file first"); return; }
+        String old = editor.getText().toString();
+        String neu = Refactor.organizeImports(old);
+        if (neu.equals(old)) UI.toast(this, "Imports are already tidy");
+        else { editor.replaceAll(neu); UI.toast(this, "Imports organized"); }
+    }
+
+    private void extractMethodAction() {
+        if (current == null || current.image || !current.lang.equals("java")) { UI.toast(this, "Open a Java file and select the statements to extract"); return; }
+        final int a = Math.min(editor.getSelectionStart(), editor.getSelectionEnd()), b = Math.max(editor.getSelectionStart(), editor.getSelectionEnd());
+        if (a == b) { UI.toast(this, "Select the statements you want to move into a new method first"); return; }
+        new FormDialog(this, "Extract method").text("name", "Method name", "extracted")
+                .note("The selected statements move into a new private method. Variables they use become parameters.")
+                .show("Extract", values -> {
+                    Refactor.Result r = Refactor.extractMethod(editor.getText().toString(), a, b, String.valueOf(values.get("name")));
+                    if (r.error != null) return r.error;
+                    editor.replaceAll(r.text);
+                    editor.setSelection(Math.min(r.callOffset, editor.length()));
+                    return null;
+                });
+    }
+
+    private void renameSymbol() {
+        if (current == null || current.image) return;
+        final String text = editor.getText().toString();
+        final int caret = editor.getSelectionStart();
+        final String res = Refactor.resourceAt(text, caret);
+        final String id = Refactor.identifierAt(text, caret);
+        if (id == null && res == null) { UI.toast(this, "Put the caret on a name first"); return; }
+        final boolean isRes = res != null;
+        final String type = isRes ? res.split(":")[0] : "";
+        final String oldName = isRes ? res.split(":")[1] : id;
+        final boolean isClass = !isRes && current.lang.equals("java") && SourceIndex.parse(text).types.contains(oldName);
+        FormDialog f = new FormDialog(this, "Rename " + (isRes ? "R." + type + "." : "") + oldName).text("name", "New name", oldName);
+        if (!isRes && !isClass) f.choice("scope", "Where", new String[]{"This file only", "Whole project"}, 0);
+        f.note(isRes ? "Renames the resource in Java, layouts and values (and its file for layouts / drawables)."
+                : isClass ? "Renames the class, its file, layout tags and the manifest."
+                : "You can review every match on the next screen.");
+        f.show("Next", values -> {
+            String nn = String.valueOf(values.get("name"));
+            if (nn.equals(oldName)) return "Choose a different name";
+            if (isRes ? !nn.matches("[A-Za-z_][A-Za-z0-9_]*") : !Refactor.validIdentifier(nn)) return "'" + nn + "' is not a valid name";
+            boolean whole = isRes || isClass || ((Integer) values.get("scope")) == 1;
+            planRename(oldName, nn, isRes, type, isClass, whole);
+            return null;
+        });
+    }
+
+    private void planRename(final String oldName, final String newName, boolean isRes, String type, boolean isClass, boolean whole) {
+        saveAll(false);
+        List<Refactor.Occ> occs;
+        final List<File[]> fileRenames = new ArrayList<>();
+        if (isRes) {
+            occs = Refactor.resourceOccurrences(allJavaFiles(), allXmlFiles(), type, oldName);
+            fileRenames.addAll(Refactor.resourceFileRenames(resDirsAll(), type, oldName, newName));
+        } else if (isClass) {
+            occs = new ArrayList<>(Refactor.javaOccurrences(allJavaFiles(), oldName));
+            occs.addAll(Refactor.xmlClassOccurrences(allXmlFiles(), oldName));
+            if (current.file.getName().equals(oldName + ".java")) fileRenames.add(new File[]{current.file, new File(current.file.getParentFile(), newName + ".java")});
+        } else {
+            occs = Refactor.javaOccurrences(whole ? allJavaFiles() : java.util.Collections.singletonList(current.file), oldName);
+        }
+        if (occs.isEmpty() && fileRenames.isEmpty()) { UI.toast(this, "No matches found"); return; }
+        final List<Refactor.Occ> list = occs;
+        LinearLayout box = UI.vbox(this);
+        box.setPadding(UI.dp(this, 16), UI.dp(this, 4), UI.dp(this, 16), UI.dp(this, 4));
+        box.addView(UI.label(this, list.size() + " match" + (list.size() == 1 ? "" : "es") + " - untick any you want to keep" + (fileRenames.isEmpty() ? "" : "\nFile: " + fileRenames.get(0)[0].getName() + " -> " + fileRenames.get(0)[1].getName()), 12, true));
+        int shown = 0;
+        for (final Refactor.Occ o : list) {
+            if (shown++ >= 200) break;
+            android.widget.CheckBox cb = new android.widget.CheckBox(this);
+            cb.setChecked(true);
+            cb.setText(FileUtil.relPath(root, o.file) + ":" + o.line + "\n" + UI.ellipsize(o.lineText, 70));
+            cb.setTextSize(12);
+            cb.setTextColor(UI.color(this, R.attr.bText));
+            cb.setOnCheckedChangeListener((v, c) -> o.enabled = c);
+            box.addView(cb);
+        }
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+        UI.dialog(this).setTitle("Rename to " + newName).setView(sv).setNegativeButton("Cancel", null)
+                .setPositiveButton("Rename", (d, w) -> applyRename(list, newName, fileRenames)).show();
+    }
+
+    private void applyRename(List<Refactor.Occ> occs, String newName, List<File[]> fileRenames) {
+        try {
+            java.util.Set<File> changed = Refactor.apply(occs, newName);
+            for (File[] fr : fileRenames) {
+                FileUtil.move(fr[0], fr[1]);
+                retarget(fr[0], fr[1]);
+            }
+            for (OpenFile t : tabs) {
+                if (t.image) continue;
+                if (changed.contains(t.file) || t.dirty == false && changed.contains(t.file)) {
+                    t.text = FileUtil.readText(t.file);
+                    t.dirty = false;
+                    t.undo = new CodeEditText.UndoStack();
+                }
+            }
+            if (current != null && !current.image) switchTo(current);
+            rebuildTree();
+            UI.toast(this, "Renamed to " + newName);
+        } catch (Exception e) {
+            UI.toast(this, "Rename failed: " + e.getMessage());
+        }
+    }
+
     @Override protected void onActivityResult(int req, int res, Intent data) {
+        if (req == REQ_PREVIEW && res == RESULT_OK && data != null) {
+            String layout = data.getStringExtra("layout");
+            int line = data.getIntExtra("line", -1);
+            if (layout != null) {
+                for (File r : resDirsAll()) {
+                    File[] dirs = r.listFiles();
+                    if (dirs == null) continue;
+                    for (File d : dirs) {
+                        File f = new File(d, layout + ".xml");
+                        if (d.getName().startsWith("layout") && f.isFile()) { openFileAt(f.getAbsolutePath(), line); return; }
+                    }
+                }
+            }
+        }
+        onActivityResultIcon(req, res, data);
+    }
+
+    private void onActivityResultIcon(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (req == REQ_GALLERY && res == RESULT_OK && data != null && data.getData() != null && pendingIcon != null) {
             Bitmap b = GalleryPicker.decode(this, data.getData(), 1024);

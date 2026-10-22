@@ -55,12 +55,22 @@ public class BuildService extends Service {
             @Override public void run() {
                 BuildEngine engine = new BuildEngine(new AndroidBuildEnv(BuildService.this), p, opt, new BuildEngine.Listener() {
                     private long last;
+                    private int lastPercent;
                     @Override public void onStage(String stage, int percent) {
+                        lastPercent = percent;
                         mgr.postStage(stage, percent);
                         if (nm != null) nm.notify(ONGOING_ID, ongoing(title, vname, stage, percent));
                     }
                     @Override public void onLog(String line) {
                         mgr.postLog(line);
+                    }
+                    @Override public void onDownload(String name, long done, long total, int filesDone) {
+                        mgr.postDownload(name, done, total, filesDone);
+                        long now = System.currentTimeMillis();
+                        if (now - last > 500 && nm != null) {
+                            last = now;
+                            nm.notify(ONGOING_ID, ongoing(title, vname, "Downloading " + name, lastPercent));
+                        }
                     }
                 });
                 mgr.setEngine(engine);

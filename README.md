@@ -31,11 +31,25 @@ Buildora itself is written in Java + XML and is built with GitHub Actions.
 
 ## Download
 
-Get the latest `Buildora.apk` (v2.0.0) from the **[Releases](../../releases)** page and install it.
+Get the latest `Buildora.apk` (v2.1.0 Overdrive) from the **[Releases](../../releases)** page and install it.
 Android asks you to allow installing from your browser/file manager the first time.
 
 **Requirements:** Android 8.0 (API 26) or newer, an ARM phone, ~300 MB free storage.
 On first launch allow **All files access** — projects are stored in shared storage so you can reach them from any file manager.
+
+## What's new in v2.1.0 "Overdrive"
+
+- **Code completion** - Java and XML suggestions while you type: members through call chains (`getResources().getString`), your own classes and fields, `R.id.*` / `R.string.*`,
+  XML tags, `android:` attributes, attribute values and `@string/…` resources. Accepting a class adds its import. The **⌁** key opens suggestions on demand.
+- **Logcat viewer** - live phone log with level, text and "my app" filters. Debug builds of your apps report **crashes** straight to Buildora (no permission needed)
+  with a notification and a Crashes tab. Optional one-time `READ_LOGS` grant shows every app's log.
+- **Layout preview** - tap the small eye icon on any layout XML: your real compiled layout is rendered with phone and tablet sizes, portrait/landscape,
+  day/night, tap-to-inspect (class, id, size) and **Go to XML** for the selected view. Screenshots are saved to `outputs/preview`.
+- **README / HTML preview** - the same eye icon previews `.md` and `.html` files.
+- **Refactoring** - rename (symbols, classes with their file/layout tags/manifest entries, resources with their files) with a reviewable match list,
+  **extract method**, and **organize imports**.
+- **Auto libraries** - Buildora reads your imports and layout tags, adds the libraries you need and downloads them with a live progress dialog
+  (file, MB, files done). Missing-library errors get a one-tap **Fix**, and **Detect libraries** is in the menu.
 
 ## What's new in v2.0.0
 

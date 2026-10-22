@@ -11,7 +11,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.tenix.buildora.build.BuildEngine;
+import com.tenix.buildora.build.Catalog;
 import com.tenix.buildora.build.ErrorHints;
+import com.tenix.buildora.build.LibraryDetector;
 import com.tenix.buildora.core.FileUtil;
 import com.tenix.buildora.core.Installer;
 import com.tenix.buildora.core.Project;
@@ -73,8 +75,9 @@ final class BuildRunner {
         final IdeActivity act;
         final Project p;
         AlertDialog dlg;
-        TextView stage, log;
-        ProgressBar bar;
+        TextView stage, log, dlLabel;
+        ProgressBar bar, dlBar;
+        View dlBox;
         ScrollView sv;
         final StringBuilder shown = new StringBuilder();
 
@@ -91,6 +94,16 @@ final class BuildRunner {
             LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(act, 6));
             blp.topMargin = UI.dp(act, 10);
             root.addView(bar, blp);
+            LinearLayout dl = UI.vbox(act);
+            dl.setVisibility(View.GONE);
+            dlLabel = UI.label(act, "", 12, false);
+            dlLabel.setPadding(0, UI.dp(act, 10), 0, 0);
+            dl.addView(dlLabel);
+            dlBar = new ProgressBar(act, null, android.R.attr.progressBarStyleHorizontal);
+            dlBar.setMax(1000);
+            dl.addView(dlBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(act, 5)));
+            dlBox = dl;
+            root.addView(dl);
             log = new TextView(act);
             log.setTypeface(Typeface.MONOSPACE);
             log.setTextSize(10);
@@ -135,7 +148,13 @@ final class BuildRunner {
             if (dlg != null && dlg.isShowing()) dlg.dismiss();
         }
 
-        @Override public void onStage(String s, int percent) { stage.setText(s + "…"); bar.setProgress(percent); }
+        @Override public void onStage(String s, int percent) { stage.setText(s + "…"); bar.setProgress(percent); if (!s.startsWith("Resolving")) dlBox.setVisibility(View.GONE); }
+
+        @Override public void onDownload(String name, long done, long total, int files) {
+            dlBox.setVisibility(View.VISIBLE);
+            dlLabel.setText("Downloading " + name + "   " + FileUtil.human(done) + (total > 0 ? " / " + FileUtil.human(total) : "") + "   (" + files + " done)");
+            dlBar.setProgress(total > 0 ? (int) (done * 1000 / total) : 0);
+        }
 
         @Override public void onLog(String line) {
             shown.append(line).append('\n');
@@ -173,6 +192,25 @@ final class BuildRunner {
         TextView close = UI.button(act, "Close", false);
         box.addView(download);
         if (r.aab == null) box.addView(install);
+        if (r.aab == null) {
+            TextView open = UI.button(act, "Open app", false);
+            TextView logs = UI.button(act, "Logcat / crashes", false);
+            box.addView(open);
+            box.addView(logs);
+            final String appId = p.activeVariant().applicationId;
+            open.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    android.content.Intent li = act.getPackageManager().getLaunchIntentForPackage(appId);
+                    if (li == null) UI.toast(act, "Install the app first (Install button)");
+                    else act.startActivity(li);
+                }
+            });
+            logs.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    act.startActivity(new android.content.Intent(act, LogcatActivity.class).putExtra("package", appId));
+                }
+            });
+        }
         box.addView(share);
         box.addView(close);
         download.setOnClickListener(new View.OnClickListener() {
@@ -287,6 +325,19 @@ final class BuildRunner {
             TextView h = UI.label(act, hint, 12, true);
             h.setPadding(0, UI.dp(act, 5), 0, 0);
             r.addView(h);
+        }
+        java.util.regex.Matcher im = java.util.regex.Pattern.compile("The import ([\\w.]+) cannot be resolved").matcher(g.message);
+        if (im.find()) {
+            final Catalog.Lib lib = LibraryDetector.forPackage(im.group(1));
+            if (lib != null && lib.addable()) {
+                TextView add = UI.button(act, "Fix: add library " + lib.name, true);
+                add.setTextSize(12);
+                add.setPadding(UI.dp(act, 10), UI.dp(act, 7), UI.dp(act, 10), UI.dp(act, 7));
+                r.addView(add);
+                add.setOnClickListener(new View.OnClickListener() {
+                    @Override public void onClick(View v) { dlg[0].dismiss(); act.addLibraryFix(lib); }
+                });
+            }
         }
         final String missing = ErrorHints.missingType(g.message);
         if (missing != null && g.file.endsWith(".java")) {

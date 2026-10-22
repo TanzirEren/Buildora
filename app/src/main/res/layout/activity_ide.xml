@@ -42,6 +42,16 @@
                 android:textSize="14sp" />
 
             <ImageButton
+                android:id="@+id/ibPreview"
+                style="@style/BIconBtn"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:contentDescription="Preview"
+                android:src="@drawable/ic_eye"
+                android:tint="?attr/bAccent"
+                android:visibility="gone" />
+
+            <ImageButton
                 android:id="@+id/ibRun"
                 style="@style/BIconBtn"
                 android:layout_width="38dp"

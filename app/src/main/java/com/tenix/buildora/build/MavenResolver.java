@@ -30,6 +30,14 @@ public final class MavenResolver {
 
     public interface Log { void log(String s); }
 
+    /** Download progress of the current file. */
+    public interface Progress { void onProgress(String name, long done, long total, int filesDone); }
+
+    private Progress progress;
+    private int filesDone;
+
+    public void setProgress(Progress p) { this.progress = p; }
+
     public static final class Artifact {
         public String group, artifact, version;
         public File file;       // .jar or .aar (null for pom-only)
@@ -188,9 +196,15 @@ public final class MavenResolver {
     private boolean fetch(String g, String a, String v, String ext, File f) {
         if (f.isFile() && f.length() > 0) return true;
         String path = g.replace('.', '/') + "/" + a + "/" + v + "/" + a + "-" + v + "." + ext;
+        final String shown = f.getName();
         for (String repo : REPOS) {
             try {
-                if (Net.download(repo + path, f, null)) return true;
+                boolean ok = Net.download(repo + path, f, new Net.Progress() {
+                    @Override public void onBytes(long done, long total) {
+                        if (progress != null) progress.onProgress(shown, done, total, filesDone);
+                    }
+                });
+                if (ok) { filesDone++; if (progress != null) progress.onProgress(shown, 1, 1, filesDone); return true; }
             } catch (IOException ignored) { }
         }
         return false;
