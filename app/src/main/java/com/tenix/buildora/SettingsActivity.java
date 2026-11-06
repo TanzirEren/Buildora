@@ -166,6 +166,64 @@ public class SettingsActivity extends BaseActivity {
         });
     }
 
+    private static final String LINK_TELEGRAM = "https://t.me/BuildoraIDE";
+    private static final String LINK_WEB = "https://buildoraide.vercel.app";
+    private static final String LINK_GITHUB = "https://github.com/developer-tanzir/BuildoraIDE";
+    private static final String LINK_DEV = "https://github.com/developer-tanzir/";
+    private static final String LINK_ISSUES = "https://github.com/developer-tanzir/BuildoraIDE/issues/new";
+
+    private void openLink(String url) {
+        try {
+            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            UI.copy(this, "link", url);
+            UI.toast(this, "No browser found. Link copied.");
+        }
+    }
+
+    /** A row with an icon button on the right (opens a link). */
+    private void iconActionRow(String title, String desc, int icon, final Runnable r) {
+        LinearLayout row = row(title, desc);
+        android.widget.ImageView iv = new android.widget.ImageView(this);
+        iv.setImageResource(icon);
+        iv.setColorFilter(UI.color(this, R.attr.bAccent));
+        row.addView(iv, new LinearLayout.LayoutParams(UI.dp(this, 24), UI.dp(this, 24)));
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setOnClickListener(v -> r.run());
+    }
+
+    /** Four contact icons, centred: Telegram, Website, GitHub (Buildora) and the developer's GitHub. */
+    private void contactIcons() {
+        LinearLayout bar = UI.hbox(this);
+        bar.setGravity(Gravity.CENTER);
+        bar.setPadding(0, UI.dp(this, 18), 0, UI.dp(this, 6));
+        int[] icons = {R.drawable.ic_telegram, R.drawable.ic_web, R.drawable.ic_github, R.drawable.ic_developer};
+        String[] names = {"Telegram", "Website", "GitHub", "Developer"};
+        final String[] links = {LINK_TELEGRAM, LINK_WEB, LINK_GITHUB, LINK_DEV};
+        for (int k = 0; k < 4; k++) {
+            final String url = links[k];
+            LinearLayout cell = UI.vbox(this);
+            cell.setGravity(Gravity.CENTER_HORIZONTAL);
+            cell.setBackgroundResource(R.drawable.bg_ripple_rect);
+            cell.setPadding(UI.dp(this, 10), UI.dp(this, 8), UI.dp(this, 10), UI.dp(this, 8));
+            android.widget.ImageView iv = new android.widget.ImageView(this);
+            iv.setImageResource(icons[k]);
+            iv.setColorFilter(UI.color(this, R.attr.bAccent));
+            cell.addView(iv, new LinearLayout.LayoutParams(UI.dp(this, 30), UI.dp(this, 30)));
+            TextView t = UI.label(this, names[k], 11, true);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(0, UI.dp(this, 4), 0, 0);
+            cell.addView(t);
+            cell.setContentDescription(names[k] + " " + url);
+            cell.setOnClickListener(v -> openLink(url));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            bar.addView(cell, lp);
+        }
+        content.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
     private void actionRow(String title, String desc, final Runnable r) {
         LinearLayout row = row(title, desc);
         row.setOnClickListener(v -> r.run());
@@ -260,13 +318,16 @@ public class SettingsActivity extends BaseActivity {
         textRow("Author email", Prefs.GIT_EMAIL, "you@example.com", false);
         textRow("Username", Prefs.GIT_USER, "GitHub username (optional)", false);
         textRow("Access token / password", Prefs.GIT_TOKEN, "Personal access token", true);
+        iconActionRow("Write & send issues", "Found a bug or have an idea? Open a new issue on GitHub", R.drawable.ic_bug,
+                () -> openLink(LINK_ISSUES));
 
         section("Storage");
         actionRow("Projects folder", Project.baseDir().getAbsolutePath(), () -> UI.copy(this, "path", Project.baseDir().getAbsolutePath()));
         actionRow("Storage permission", Perm.hasStorage(this) ? "Granted" : "Not granted - tap to allow", () -> Perm.requestStorage(this, 21));
 
         section("About");
-        actionRow("Buildora 2.1.0", "On-device Java & XML app builder • by TENIx", () -> { });
+        actionRow("Buildora 2.1.1", "Developer Tanzir", () -> { });
+        contactIcons();
 
         scroll.post(() -> scroll.scrollTo(0, sy));
     }

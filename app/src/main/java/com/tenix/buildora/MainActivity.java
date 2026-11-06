@@ -28,6 +28,7 @@ import android.widget.Switch;
 import android.widget.TextView;
 
 import com.tenix.buildora.build.GitHelper;
+import com.tenix.buildora.build.ManifestMerger;
 import com.tenix.buildora.core.FileUtil;
 import com.tenix.buildora.core.GalleryPicker;
 import com.tenix.buildora.core.FilePicker;
@@ -35,6 +36,7 @@ import com.tenix.buildora.core.IconUtil;
 import com.tenix.buildora.core.Perm;
 import com.tenix.buildora.core.Prefs;
 import com.tenix.buildora.core.Project;
+import com.tenix.buildora.core.ProjectEditor;
 import com.tenix.buildora.core.ProjectStore;
 import com.tenix.buildora.core.Templates;
 import com.tenix.buildora.core.UI;
@@ -87,7 +89,7 @@ public class MainActivity extends BaseActivity {
         };
         lv.setAdapter(adapter);
         lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-            @Override public void onItemClick(AdapterView<?> a, View v, int pos, long id) { openProject(projects.get(pos)); }
+            @Override public void onItemClick(AdapterView<?> a, View v, int pos, long id) { projectMenu(projects.get(pos)); }
         });
         lv.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
             @Override public boolean onItemLongClick(AdapterView<?> a, View v, int pos, long id) {
@@ -224,13 +226,17 @@ public class MainActivity extends BaseActivity {
         return l;
     }
 
-    private void newProjectDialog() {
+    private void newProjectDialog() { projectDialog(null); }
+
+    /** The same form creates a project (edit == null) or edits an existing one. */
+    private void projectDialog(final Project edit) {
+        final boolean editing = edit != null;
         final Templates.Options o = new Templates.Options();
-        o.minSdk = Prefs.num(this, Prefs.DEF_MIN_SDK, 21);
-        o.targetSdk = Prefs.num(this, Prefs.DEF_TARGET_SDK, 34);
-        o.iconRadius = Prefs.num(this, Prefs.DEF_RADIUS, 22);
+        o.minSdk = editing ? edit.minSdk : Prefs.num(this, Prefs.DEF_MIN_SDK, 21);
+        o.targetSdk = editing ? edit.targetSdk : Prefs.num(this, Prefs.DEF_TARGET_SDK, 34);
+        o.iconRadius = editing ? edit.iconRadius : Prefs.num(this, Prefs.DEF_RADIUS, 22);
         final String prefix = Prefs.str(this, Prefs.PKG_PREFIX, "com.example");
-        final Bitmap[] iconBmp = {IconUtil.loadDefault(this)};
+        final Bitmap[] iconBmp = {editing ? IconUtil.loadProjectIcon(this, edit.resDir, edit.workDir()) : IconUtil.loadDefault(this)};
         final boolean[] customIcon = {false};
 
         ScrollView sv = new ScrollView(this);
@@ -238,13 +244,13 @@ public class MainActivity extends BaseActivity {
         form.setPadding(UI.dp(this, 20), UI.dp(this, 4), UI.dp(this, 20), UI.dp(this, 8));
         sv.addView(form);
 
-        final EditText name = UI.input(this, "My App", "");
-        final EditText appName = UI.input(this, "App name shown on the launcher", "");
-        final EditText pkg = UI.input(this, prefix + ".myapp", prefix + ".myapp");
+        final EditText name = UI.input(this, "My App", editing ? edit.name : "");
+        final EditText appName = UI.input(this, "App name shown on the launcher", editing ? edit.appName : "");
+        final EditText pkg = UI.input(this, prefix + ".myapp", editing ? edit.packageName : prefix + ".myapp");
         form.addView(field("Project name", name));
         form.addView(field("App name", appName));
         form.addView(field("Package ID", pkg));
-        final boolean[] touched = {false, false};
+        final boolean[] touched = {editing, editing};   // when editing, never auto-fill the other fields
         appName.addTextChangedListener(new SimpleWatcher() {
             @Override public void after(String s) { if (appName.hasFocus()) touched[0] = true; }
         });
@@ -273,7 +279,7 @@ public class MainActivity extends BaseActivity {
         final SeekBar radius = new SeekBar(this);
         radius.setMax(50);
         radius.setProgress(o.iconRadius);
-        iconCol.addView(UI.label(this, "App icon (default: Buildora icon)", 12, true));
+        iconCol.addView(UI.label(this, editing ? "App icon" : "App icon (default: Buildora icon)", 12, true));
         iconCol.addView(radiusLabel);
         iconCol.addView(radius, new LinearLayout.LayoutParams(UI.dp(this, 190), ViewGroup.LayoutParams.WRAP_CONTENT));
         iconRow.addView(iconCol);
@@ -327,16 +333,19 @@ public class MainActivity extends BaseActivity {
         reset.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 iconBmp[0] = IconUtil.loadDefault(MainActivity.this);
-                customIcon[0] = false;
+                customIcon[0] = editing;      // when editing, "Use default" is a real change
                 updatePreview.run();
             }
         });
 
         // sdk
-        final String[] sdkNames = new String[14];
-        for (int i = 0; i < sdkNames.length; i++) sdkNames[i] = String.valueOf(21 + i);
-        final Spinner minS = spinner(sdkNames, Math.max(0, Math.min(13, o.minSdk - 21)));
-        final Spinner tgtS = spinner(sdkNames, Math.max(0, Math.min(13, o.targetSdk - 21)));
+        // imported projects can use levels outside 21..34, so the list grows to include theirs
+        final int sdkBase = Math.min(21, Math.min(o.minSdk, o.targetSdk));
+        final int sdkTop = Math.max(34, Math.max(o.minSdk, o.targetSdk));
+        final String[] sdkNames = new String[sdkTop - sdkBase + 1];
+        for (int i = 0; i < sdkNames.length; i++) sdkNames[i] = String.valueOf(sdkBase + i);
+        final Spinner minS = spinner(sdkNames, Math.max(0, Math.min(sdkNames.length - 1, o.minSdk - sdkBase)));
+        final Spinner tgtS = spinner(sdkNames, Math.max(0, Math.min(sdkNames.length - 1, o.targetSdk - sdkBase)));
         LinearLayout sdkRow = UI.hbox(this);
         sdkRow.addView(field("Min SDK", minS), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         sdkRow.addView(field("Target SDK", tgtS), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -344,16 +353,18 @@ public class MainActivity extends BaseActivity {
         form.addView(UI.label(this, "Compile API: 34 (set automatically)", 11, true));
 
         final Spinner tpl = spinner(Templates.NAMES, 0);
-        form.addView(field("Template", tpl));
-        LinearLayout row2 = UI.hbox(this);
         final Spinner theme = spinner(Templates.THEMES, 0);
         final Spinner orient = spinner(Templates.ORIENTATIONS, 0);
-        row2.addView(field("Theme", theme), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        row2.addView(field("Orientation", orient), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        form.addView(row2);
+        if (!editing) {       // template, theme and orientation only apply when a project is created
+            form.addView(field("Template", tpl));
+            LinearLayout row2 = UI.hbox(this);
+            row2.addView(field("Theme", theme), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            row2.addView(field("Orientation", orient), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            form.addView(row2);
+        }
         LinearLayout row3 = UI.hbox(this);
-        final EditText vName = UI.input(this, "1.0", "1.0");
-        final EditText vCode = UI.numberInput(this, "1", 1);
+        final EditText vName = UI.input(this, "1.0", editing ? edit.versionName : "1.0");
+        final EditText vCode = UI.numberInput(this, "1", editing ? edit.versionCode : 1);
         row3.addView(field("Version name", vName), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         row3.addView(field("Version code", vCode), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         form.addView(row3);
@@ -361,10 +372,12 @@ public class MainActivity extends BaseActivity {
         internet.setText("Internet permission");
         internet.setTextColor(UI.color(this, R.attr.bText));
         internet.setPadding(0, UI.dp(this, 14), 0, UI.dp(this, 6));
+        if (editing) internet.setChecked(ProjectEditor.hasInternet(edit.manifestFile));
         form.addView(internet);
+        if (editing) form.addView(UI.label(this, "Changing the package id moves your source folders and rewrites the package in your code.", 11, true));
 
-        final AlertDialog dlg = UI.dialog(this).setTitle("New project").setView(sv)
-                .setPositiveButton("Create", null).setNegativeButton("Cancel", null).create();
+        final AlertDialog dlg = UI.dialog(this).setTitle(editing ? "Edit project" : "New project").setView(sv)
+                .setPositiveButton(editing ? "Save" : "Create", null).setNegativeButton("Cancel", null).create();
         dlg.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         dlg.show();
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
@@ -380,8 +393,8 @@ public class MainActivity extends BaseActivity {
                 o.projectName = pn;
                 o.appName = an;
                 o.packageName = pk;
-                o.minSdk = 21 + minS.getSelectedItemPosition();
-                o.targetSdk = Math.max(o.minSdk, 21 + tgtS.getSelectedItemPosition());
+                o.minSdk = sdkBase + minS.getSelectedItemPosition();
+                o.targetSdk = Math.max(o.minSdk, sdkBase + tgtS.getSelectedItemPosition());
                 o.template = tpl.getSelectedItemPosition();
                 o.theme = theme.getSelectedItemPosition();
                 o.orientation = orient.getSelectedItemPosition();
@@ -390,10 +403,72 @@ public class MainActivity extends BaseActivity {
                 o.internet = internet.isChecked();
                 o.iconRadius = radius.getProgress();
                 o.icon = iconBmp[0];
+                if (editing) {
+                    boolean iconChanged = customIcon[0] || o.iconRadius != edit.iconRadius;
+                    dlg.dismiss();
+                    applyProjectEdit(edit, o, iconChanged);
+                    return;
+                }
                 dlg.dismiss();
                 createProject(o);
             }
         });
+    }
+
+    /** Applies the edit form to an existing project (off the UI thread; a package change touches many files). */
+    private void applyProjectEdit(final Project p, final Templates.Options o, final boolean iconChanged) {
+        final File parent = p.root.getParentFile();
+        final String newFolder = ProjectEditor.newFolderName(p.root.getName(), o.projectName);
+        final File newRoot = newFolder == null ? p.root : new File(parent, newFolder);
+        if (newFolder != null && newRoot.exists()) { UI.toast(this, "A project named \"" + newFolder + "\" already exists"); return; }
+        final AlertDialog wait = busy("Saving changes…");
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String problem = null;
+                String done = "Project updated";
+                try {
+                    p.detectLayout();
+                    boolean wipeCache = false;
+                    String oldPkg = ManifestMerger.packageOf(p.manifestFile);
+                    if (oldPkg.isEmpty()) oldPkg = p.packageName;
+                    if (!o.packageName.equals(oldPkg)) {
+                        ProjectEditor.PackageResult r = ProjectEditor.changePackage(p.moduleDir(), p.srcRoot, p.javaDirs, oldPkg, o.packageName);
+                        done = "Package changed in " + r.filesRewritten + " file" + (r.filesRewritten == 1 ? "" : "s");
+                        wipeCache = true;
+                    }
+                    p.packageName = o.packageName;
+                    if (!ProjectEditor.setAppName(p.resDir, o.appName)) done += " (app name string not found, edit the label in the manifest)";
+                    p.appName = o.appName;
+                    p.versionName = o.versionName;
+                    p.versionCode = o.versionCode;
+                    p.minSdk = o.minSdk;
+                    p.targetSdk = o.targetSdk;
+                    ProjectEditor.syncGradle(p.moduleDir(), p.minSdk, p.targetSdk, p.versionCode, p.versionName);
+                    ProjectEditor.setInternet(p.manifestFile, o.internet);
+                    if (iconChanged && o.icon != null) {
+                        IconUtil.writeProjectIcon(o.icon, p.resDir, p.workDir(), o.iconRadius);
+                        p.iconRadius = o.iconRadius;
+                    }
+                    if (newFolder != null) wipeCache = true;
+                    if (wipeCache) ProjectEditor.clearBuildCache(p.workDir());
+                    p.save();
+                    if (newFolder != null && !p.root.renameTo(newRoot)) {
+                        problem = "Your changes were saved, but the folder could not be renamed to \"" + newFolder + "\".";
+                    }
+                } catch (Exception e) {
+                    problem = "Could not save: " + e.getMessage();
+                }
+                final String msg = problem;
+                final String ok = done;
+                ui(new Runnable() {
+                    @Override public void run() {
+                        wait.dismiss();
+                        reload();
+                        if (msg != null) UI.message(MainActivity.this, "Edit project", msg); else UI.toast(MainActivity.this, ok);
+                    }
+                });
+            }
+        }).start();
     }
 
     private void createProject(final Templates.Options o) {
@@ -506,16 +581,17 @@ public class MainActivity extends BaseActivity {
     // ------------------------------------------------------------------ project menu
 
     private void projectMenu(final Project p) {
-        String[] items = {"Open", "Rename", "Duplicate", "Export as ZIP", "Project info", "Delete"};
+        String[] items = {"Open", "Edit project", "Rename", "Duplicate", "Export as ZIP", "Project info", "Delete"};
         UI.dialog(this).setTitle(p.name).setItems(items, new android.content.DialogInterface.OnClickListener() {
             @Override public void onClick(android.content.DialogInterface d, int which) {
                 switch (which) {
                     case 0: openProject(p); break;
-                    case 1: renameProject(p); break;
-                    case 2: duplicateProject(p); break;
-                    case 3: exportProject(p); break;
-                    case 4: infoProject(p); break;
-                    case 5: deleteProject(p); break;
+                    case 1: projectDialog(p); break;
+                    case 2: renameProject(p); break;
+                    case 3: duplicateProject(p); break;
+                    case 4: exportProject(p); break;
+                    case 5: infoProject(p); break;
+                    case 6: deleteProject(p); break;
                 }
             }
         }).show();

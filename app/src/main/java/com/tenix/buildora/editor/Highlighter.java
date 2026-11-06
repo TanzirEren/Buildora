@@ -88,10 +88,15 @@ public final class Highlighter {
 
     /** Re-highlight text between from and to (offsets are clamped). */
     public static void apply(Editable e, String lang, EditorScheme s, int from, int to) {
+        apply(e, lang, s, from, to, true);
+    }
+
+    /** clearFirst=false lets the caller clear a wider range itself (one getSpans call instead of two). */
+    public static void apply(Editable e, String lang, EditorScheme s, int from, int to, boolean clearFirst) {
         int len = e.length();
         from = Math.max(0, Math.min(from, len));
         to = Math.max(from, Math.min(to, len));
-        clear(e, from, to);
+        if (clearFirst) clear(e, from, to);
         Pattern p;
         switch (lang) {
             case "java": p = JAVA; break;

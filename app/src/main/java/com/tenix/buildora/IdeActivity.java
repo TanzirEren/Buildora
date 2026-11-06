@@ -1089,7 +1089,7 @@ public class IdeActivity extends BaseActivity {
         UI.dialog(this).setTitle("App icon").setView(box).setNegativeButton("Cancel", null)
                 .setPositiveButton("Apply", (d, w) -> {
                     try {
-                        IconUtil.writeMipmaps(bm[0], project.resDir, sb.getProgress());
+                        IconUtil.writeProjectIcon(bm[0], project.resDir, project.workDir(), sb.getProgress());
                         project.iconRadius = sb.getProgress();
                         project.save();
                         rebuildTree();

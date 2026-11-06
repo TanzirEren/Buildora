@@ -67,6 +67,27 @@ public final class IconUtil {
         }
     }
 
+    /** Like writeMipmaps, and also keeps the un-rounded source so the corner radius can be changed again later without quality loss. */
+    public static void writeProjectIcon(Bitmap src, File resDir, File workDir, int radiusPercent) throws IOException {
+        writeMipmaps(src, resDir, radiusPercent);
+        try {
+            workDir.mkdirs();
+            save(rounded(src, 512, 0), new File(workDir, "icon_src.png"));
+        } catch (IOException ignored) { /* only a convenience copy */ }
+    }
+
+    /** The icon the project was made with: saved source, else the current launcher icon, else the Buildora default. */
+    public static Bitmap loadProjectIcon(Context c, File resDir, File workDir) {
+        File[] cands = {new File(workDir, "icon_src.png"), new File(resDir, "mipmap-xxxhdpi/ic_launcher.png"),
+                new File(resDir, "mipmap-xxhdpi/ic_launcher.png"), new File(resDir, "mipmap-xhdpi/ic_launcher.png")};
+        for (File f : cands) {
+            if (!f.isFile()) continue;
+            Bitmap b = BitmapFactory.decodeFile(f.getAbsolutePath());
+            if (b != null) return b;
+        }
+        return loadDefault(c);
+    }
+
     public static void save(Bitmap b, File f) throws IOException {
         try (FileOutputStream out = new FileOutputStream(f)) {
             b.compress(Bitmap.CompressFormat.PNG, 100, out);

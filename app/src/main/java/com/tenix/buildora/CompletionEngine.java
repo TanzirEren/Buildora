@@ -48,6 +48,7 @@ final class CompletionEngine {
         final int gen = ++generation;
         POOL.execute(new Runnable() {
             @Override public void run() {
+                if (gen != generation) return;      // a newer keystroke already replaced this request
                 List<Completion> out = new ArrayList<>();
                 try {
                     String name = file == null ? "" : file.getName();
@@ -65,7 +66,8 @@ final class CompletionEngine {
                         if (new File(d, "java").isDirectory()) srcDirs.add(new File(d, "java"));
                         if (new File(d, "res").isDirectory()) resDirs.add(new File(d, "res"));
                     }
-                    ResourceIndex res = ResourceIndex.scan(resDirs);
+                    ResourceIndex res = resources(resDirs, force);
+                    if (gen != generation) return;
                     if (name.endsWith(".java")) out = new JavaCompleter(idx, srcDirs, res).complete(text, caret, force);
                     else if (name.endsWith(".xml")) out = new XmlCompleter(idx, res, srcDirs).complete(text, caret, file, force);
                 } catch (Throwable ignored) { }
@@ -75,6 +77,21 @@ final class CompletionEngine {
                 });
             }
         });
+    }
+
+    private static ResourceIndex resCache;
+    private static String resCacheKey = "";
+    private static long resCacheAt;
+
+    /** Scanning every resource file on every keystroke is wasteful; reuse the index for a few seconds (explicit requests rescan). */
+    private static synchronized ResourceIndex resources(List<File> dirs, boolean force) {
+        String key = dirs.toString();
+        long now = android.os.SystemClock.uptimeMillis();
+        if (!force && resCache != null && key.equals(resCacheKey) && now - resCacheAt < 4000) return resCache;
+        resCache = ResourceIndex.scan(dirs);
+        resCacheKey = key;
+        resCacheAt = now;
+        return resCache;
     }
 
     static void cancelPending() { generation++; }

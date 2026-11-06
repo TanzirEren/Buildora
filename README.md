@@ -31,11 +31,20 @@ Buildora itself is written in Java + XML and is built with GitHub Actions.
 
 ## Download
 
-Get the latest `Buildora.apk` (v2.1.0 Overdrive) from the **[Releases](../../releases)** page and install it.
+Get the latest `Buildora.apk` (v2.1.1 Horizon) from the **[Releases](../../releases)** page and install it.
 Android asks you to allow installing from your browser/file manager the first time.
 
 **Requirements:** Android 8.0 (API 26) or newer, an ARM phone, ~300 MB free storage.
 On first launch allow **All files access** — projects are stored in shared storage so you can reach them from any file manager.
+
+## What's new in v2.1.1 "Horizon"
+
+- **Smooth editing on long files** - typing, scrolling and the line numbers no longer slow down as a file grows. Only the part of the file you can see is coloured,
+  error checking runs in the background, and the line numbers use an index instead of scanning the whole file on every frame.
+- **Edit existing projects** - tap a project, choose **Edit project**, and change the name, app name, package id, icon, SDK levels, version name/code and the internet permission.
+  Changing the package id moves your source folders and rewrites the package in your code, manifest and Gradle files.
+- **Editor display fix** - the blank band at the bottom of the editor (code was not drawn there) is gone.
+- **Settings** - *Write & send issues* opens a new GitHub issue; the About section now credits **Developer Tanzir** and has Telegram, Website, GitHub and Developer GitHub shortcuts.
 
 ## What's new in v2.1.0 "Overdrive"
 

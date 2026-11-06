@@ -93,6 +93,31 @@ public class CodeEditText extends EditText {
     private int lastInsertStart = -1, lastInsertCount = 0;
     private String lastInserted = "";
 
+    // ---- line index (newline offsets), rebuilt lazily once per text change
+    private final LineIndex lines = new LineIndex();
+    private final LineIndex.Source textSource = new LineIndex.Source() {
+        @Override public int length() { return CodeEditText.this.length(); }
+        @Override public void getChars(int start, int end, char[] dst, int off) { CodeEditText.this.getText().getChars(start, end, dst, off); }
+    };
+    private int lastDigits = -1;
+    private float lastGutterTextSize = -1f;
+    private int lastPadLeft = Integer.MIN_VALUE;
+
+    // ---- windowed highlighting for big files
+    private static final int FULL_HL_LIMIT = 30000;     // chars; below this the whole file is highlighted
+    private int hlFrom = 0, hlTo = 0;
+    private boolean scrollHlPending = false;
+    private final Runnable scrollHlRunnable = new Runnable() {
+        @Override public void run() { scrollHlPending = false; rehighlight(); }
+    };
+
+    // ---- background lint
+    private int editVersion = 0;
+    private static final java.util.concurrent.ExecutorService LINT_POOL = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    private final Paint squigglePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final android.graphics.Path squigglePath = new android.graphics.Path();
+
     private final ScaleGestureDetector scale;
     private float zoomSize;
     private boolean ignoreUntilUp = false;
@@ -117,6 +142,10 @@ public class CodeEditText extends EditText {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         setLineSpacing(0, 1.12f);
         setFilters(new android.text.InputFilter[0]);
+        // never put the whole file into the saved-instance Bundle, and keep autofill out of every keystroke
+        setFreezesText(false);
+        setImportantForAutofill(IMPORTANT_FOR_AUTOFILL_NO);
+        squigglePaint.setStyle(Paint.Style.STROKE);
         errPaint.setStyle(Paint.Style.FILL);
         divPaint.setStrokeWidth(1f);
         zoomSize = 12;
@@ -141,6 +170,9 @@ public class CodeEditText extends EditText {
                 capRemoved = s.subSequence(start, start + count).toString();
             }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                lines.markDirty();
+                editVersion++;
+                shiftHlWindow(start, before, count);
                 if (internalEdit) return;
                 String added = s.subSequence(start, start + count).toString();
                 lastInsertStart = start;
@@ -171,6 +203,8 @@ public class CodeEditText extends EditText {
     public void configure(boolean lineNumbers, boolean hlLine, boolean indent, boolean close,
                           int tab, boolean spaces, boolean wrap, boolean lint, float sp) {
         showLineNumbers = lineNumbers;
+        lastDigits = -1;
+        lastPadLeft = Integer.MIN_VALUE;
         highlightLine = hlLine;
         autoIndent = indent;
         autoClose = close;
@@ -218,6 +252,7 @@ public class CodeEditText extends EditText {
         recording = true;
         internalEdit = false;
         errorLines.clear();
+        hlFrom = hlTo = 0;
         updateGutter();
         rehighlight();
         if (liveLint) scheduleLint();
@@ -397,14 +432,7 @@ public class CodeEditText extends EditText {
 
     public void gotoLine(int line) {
         Layout l = getLayout();
-        String t = getText().toString();
-        int idx = 0, cur = 1;
-        while (cur < line) {
-            int nl = t.indexOf('\n', idx);
-            if (nl < 0) break;
-            idx = nl + 1;
-            cur++;
-        }
+        int idx = lines.lineStart(textSource, line);
         setSelection(idx);
         requestFocus();
         if (l != null) {
@@ -415,21 +443,20 @@ public class CodeEditText extends EditText {
     }
 
     public int currentLine() {
-        int sel = Math.max(0, getSelectionStart());
-        Editable e = getText();
-        int line = 1;
-        for (int i = 0; i < sel && i < e.length(); i++) if (e.charAt(i) == '\n') line++;
-        return line;
+        return lineOfOffset(Math.max(0, getSelectionStart()));
     }
 
     public int currentCol() {
-        int sel = Math.max(0, getSelectionStart());
-        Editable e = getText();
-        int i = Math.min(sel, e.length());
-        int col = 1;
-        while (i > 0 && e.charAt(i - 1) != '\n') { i--; col++; }
-        return col;
+        int sel = Math.max(0, Math.min(getSelectionStart(), length()));
+        int start = lines.lineStart(textSource, lines.lineOf(textSource, sel));
+        return sel - start + 1;
     }
+
+    // ------------------------------------------------------------------ line index
+
+    private void ensureLines() { lines.ensure(textSource); }
+    private int lineOfOffset(int off) { return lines.lineOf(textSource, off); }
+    private int logicalLineCount() { return lines.lineCount(textSource); }
 
     // ------------------------------------------------------------------ find / replace
 
@@ -559,7 +586,9 @@ public class CodeEditText extends EditText {
             boolean nextCloses = pos < e.length() && (e.charAt(pos) == '}' || e.charAt(pos) == ')' || e.charAt(pos) == ']');
             String extra = opensBrace ? indentUnit() : "";
             if (lang.equals("xml") && before == '>' && !lang.isEmpty()) {
-                int lt = e.toString().lastIndexOf('<', ls);
+                int lt = ls - 1;
+                while (lt >= prevStart && e.charAt(lt) != '<') lt--;
+                if (lt < prevStart) lt = -1;
                 if (lt >= prevStart && lt + 1 < e.length() && e.charAt(lt + 1) != '/' && e.charAt(lt + 1) != '?'
                         && e.charAt(lt + 1) != '!' && !(ls >= 2 && e.charAt(ls - 2) == '/')) {
                     extra = indentUnit();
@@ -595,18 +624,21 @@ public class CodeEditText extends EditText {
     }
 
     private void autoCloseTag(Editable e, int pos) {
-        String text = e.toString();
-        int lt = text.lastIndexOf('<', pos - 1);
-        if (lt < 0) return;
-        String inner = text.substring(lt + 1, pos - 1);
+        int lt = pos - 2;
+        int floor = Math.max(0, pos - 4000);
+        while (lt >= floor && e.charAt(lt) != '<') lt--;
+        if (lt < floor) return;
+        String inner = e.subSequence(lt + 1, pos - 1).toString();
         if (inner.isEmpty() || inner.startsWith("/") || inner.startsWith("?") || inner.startsWith("!") || inner.endsWith("/")) return;
         if (inner.indexOf('<') >= 0) return;
         int end = 0;
         while (end < inner.length() && !Character.isWhitespace(inner.charAt(end))) end++;
         String tag = inner.substring(0, end);
         if (tag.isEmpty()) return;
-        if (text.startsWith("</" + tag, pos)) return;
-        e.insert(pos, "</" + tag + ">");
+        String closing = "</" + tag;
+        int lim = Math.min(e.length(), pos + closing.length());
+        if (e.subSequence(pos, lim).toString().equals(closing)) return;
+        e.insert(pos, closing + ">");
         setSelection(pos);
     }
 
@@ -614,59 +646,146 @@ public class CodeEditText extends EditText {
 
     private void scheduleHighlight() {
         handler.removeCallbacks(hlRunnable);
-        handler.postDelayed(hlRunnable, 160);
+        handler.postDelayed(hlRunnable, length() > 60000 ? 260 : 160);
         if (liveLint) scheduleLint();
     }
 
     private void scheduleLint() {
         handler.removeCallbacks(lintRunnable);
-        handler.postDelayed(lintRunnable, 700);
+        handler.postDelayed(lintRunnable, length() > 100000 ? 1400 : 700);
+    }
+
+    /** Keeps the highlighted window glued to its text when characters are inserted or deleted. */
+    private void shiftHlWindow(int start, int before, int count) {
+        if (hlTo <= hlFrom) return;
+        int delta = count - before;
+        if (start + before <= hlFrom) { hlFrom = Math.max(0, hlFrom + delta); hlTo = Math.max(hlFrom, hlTo + delta); }
+        else if (start <= hlTo) hlTo = Math.max(hlFrom, hlTo + delta);
+        int len = length() ;
+        if (hlTo > len) hlTo = len;
+        if (hlFrom > hlTo) hlFrom = hlTo;
+    }
+
+    /** Big files are only coloured around the viewport; this asks for a refresh when the viewport nears the window edge. */
+    @Override protected void onScrollChanged(int l, int t, int oldl, int oldt) {
+        super.onScrollChanged(l, t, oldl, oldt);
+        if (length() <= FULL_HL_LIMIT || lang.equals("text") || scrollHlPending) return;
+        Layout lay = getLayout();
+        if (lay == null || lay.getLineCount() == 0) return;
+        int vf = lay.getLineForVertical(getScrollY());
+        int vl = lay.getLineForVertical(getScrollY() + getHeight());
+        boolean needTop = hlFrom > 0 && vf - lay.getLineForOffset(Math.min(hlFrom, length())) < 40;
+        boolean needBottom = hlTo < length() && lay.getLineForOffset(Math.min(hlTo, length())) - vl < 40;
+        if (needTop || needBottom || hlTo <= hlFrom) {
+            scrollHlPending = true;
+            handler.postDelayed(scrollHlRunnable, 70);
+        }
+    }
+
+    /** Start of the window must not fall inside a block comment, otherwise its colours would be wrong. */
+    private int adjustForBlockComment(int from) {
+        String open, close;
+        if (lang.equals("java")) { open = "/*"; close = "*/"; }
+        else if (lang.equals("xml")) { open = "<!--"; close = "-->"; }
+        else return from;
+        ensureLines();
+        char[] b = lines.chars();
+        int floor = Math.max(0, from - 40000);
+        for (int i = Math.min(from, length()) - 1; i >= floor; i--) {
+            if (b[i] == close.charAt(close.length() - 1) && i - close.length() + 1 >= 0
+                    && regionIs(b, i - close.length() + 1, close)) return from;       // closed comment before us
+            if (b[i] == open.charAt(open.length() - 1) && i - open.length() + 1 >= 0
+                    && regionIs(b, i - open.length() + 1, open)) return i - open.length() + 1;   // we are inside a comment
+        }
+        return from;
+    }
+
+    private static boolean regionIs(char[] b, int at, String what) {
+        for (int k = 0; k < what.length(); k++) if (b[at + k] != what.charAt(k)) return false;
+        return true;
     }
 
     public void rehighlight() {
         Editable e = getText();
-        if (lang.equals("text")) { Highlighter.clear(e, 0, e.length()); return; }
-        int from = 0, to = e.length();
-        if (e.length() > 90000) {
-            Layout l = getLayout();
-            if (l != null) {
-                int fl = Math.max(0, l.getLineForVertical(getScrollY()) - 120);
-                int ll = Math.min(l.getLineCount() - 1, l.getLineForVertical(getScrollY() + getHeight()) + 120);
-                from = l.getLineStart(fl);
-                to = l.getLineEnd(ll);
-            } else to = 90000;
+        int len = e.length();
+        if (lang.equals("text")) { Highlighter.clear(e, 0, len); hlFrom = hlTo = 0; return; }
+        int from = 0, to = len;
+        Layout l = getLayout();
+        if (len > FULL_HL_LIMIT && l != null && l.getLineCount() > 0) {
+            int fl = Math.max(0, l.getLineForVertical(getScrollY()) - 160);
+            int ll = Math.min(l.getLineCount() - 1, l.getLineForVertical(getScrollY() + getHeight()) + 160);
+            from = l.getLineStart(fl);
+            to = l.getLineEnd(ll);
+            ensureLines();
+            from = adjustForBlockComment(from);
+        } else if (len > FULL_HL_LIMIT) {
+            to = FULL_HL_LIMIT;
         }
+        // drop colours of the previous window as well, so nothing stale is left behind
+        int clearFrom = Math.min(from, hlTo > hlFrom ? hlFrom : from);
+        int clearTo = Math.max(to, hlTo > hlFrom ? hlTo : to);
         internalEdit = true;
-        try { Highlighter.apply(e, lang, scheme, from, to); } finally { internalEdit = false; }
+        try {
+            Highlighter.clear(e, Math.max(0, clearFrom), Math.min(len, clearTo));
+            Highlighter.apply(e, lang, scheme, from, to, false);
+        } finally { internalEdit = false; }
+        hlFrom = from;
+        hlTo = to;
     }
 
     private void runLint() {
         if (!liveLint || listener == null) return;
-        List<Linter.Problem> probs = Linter.check(getText().toString(), lang);
-        Map<Integer, String> m = new HashMap<>();
-        for (Linter.Problem p : probs) m.put(p.line, p.message);
-        setErrors(m);
-        listener.onLint(probs);
+        final String text = getText().toString();
+        final String language = lang;
+        final int version = editVersion;
+        LINT_POOL.execute(new Runnable() {
+            @Override public void run() {
+                final List<Linter.Problem> probs;
+                try { probs = Linter.check(text, language); } catch (Throwable t) { return; }
+                final Map<Integer, String> m = new HashMap<>();
+                for (Linter.Problem p : probs) m.put(p.line, p.message);
+                handler.post(new Runnable() {
+                    @Override public void run() {
+                        if (version != editVersion || listener == null) return;   // text changed meanwhile; a newer lint is on its way
+                        setErrors(m);
+                        listener.onLint(probs);
+                    }
+                });
+            }
+        });
     }
 
     // ------------------------------------------------------------------ gutter & drawing
 
+    /**
+     * Bottom padding must stay tiny: TextView clips the text at the bottom padding, so a big value
+     * (it used to be 80dp) left a blank band at the bottom of the editor where no code was drawn.
+     */
+    private static final int PAD_BOTTOM_DP = 6;
+
     private void updateGutter() {
         if (!showLineNumbers) {
             gutterWidth = 0;
-            setPadding(UIDp(8), UIDp(4), UIDp(24), UIDp(80));
+            applyPadLeft(UIDp(8));
             return;
         }
-        int lines = 1;
-        Editable e = getText();
-        for (int i = 0; i < e.length(); i++) if (e.charAt(i) == '\n') lines++;
-        int digits = Math.max(2, String.valueOf(lines).length());
-        gutterTextPaint.setTextSize(getTextSize() * 0.85f);
-        gutterTextPaint.setTypeface(getTypeface());
-        float w = gutterTextPaint.measureText("0") * digits + UIDp(14);
-        int gw = Math.round(w);
-        if (gw != gutterWidth) gutterWidth = gw;
-        setPadding(gutterWidth + UIDp(6), UIDp(4), UIDp(24), UIDp(80));
+        int digits = Math.max(2, String.valueOf(logicalLineCount()).length());
+        float ts = getTextSize();
+        if (digits != lastDigits || ts != lastGutterTextSize) {
+            lastDigits = digits;
+            lastGutterTextSize = ts;
+            gutterTextPaint.setTextSize(ts * 0.85f);
+            gutterTextPaint.setTypeface(getTypeface());
+            gutterWidth = Math.round(gutterTextPaint.measureText("0") * digits + UIDp(14));
+        }
+        applyPadLeft(gutterWidth + UIDp(6));
+    }
+
+    /** setPadding forces a re-layout, so it is only called when the value really changes. */
+    private void applyPadLeft(int left) {
+        if (left == lastPadLeft) return;
+        lastPadLeft = left;
+        setPadding(left, UIDp(4), UIDp(24), UIDp(PAD_BOTTOM_DP));
     }
 
     private int UIDp(float v) {
@@ -690,24 +809,19 @@ public class CodeEditText extends EditText {
         int lastVis = l.getLineForVertical(scrollY + h);
         CharSequence text = getText();
 
-        // logical line number of first visible visual line
-        int logical = 1;
-        int firstStart = l.getLineStart(firstVis);
-        for (int i = 0; i < firstStart && i < text.length(); i++) if (text.charAt(i) == '\n') logical++;
         int caretVisual = -1;
         if (highlightLine && getSelectionStart() == getSelectionEnd() && getSelectionStart() >= 0) {
             caretVisual = l.getLineForOffset(getSelectionStart());
         }
 
-        int[] logicalNums = new int[Math.max(0, lastVis - firstVis + 1)];
-        boolean[] starts = new boolean[logicalNums.length];
-        int cur = logical;
+        // logical line number of every visible visual line: binary search, no scan from the top of the file
+        int count = Math.max(0, lastVis - firstVis + 1);
+        int[] logicalNums = new int[count];
+        boolean[] starts = new boolean[count];
         for (int i = firstVis; i <= lastVis; i++) {
             int ls = l.getLineStart(i);
-            boolean isStart = ls == 0 || text.charAt(ls - 1) == '\n';
-            if (i > firstVis && isStart) cur++;
-            starts[i - firstVis] = isStart;
-            logicalNums[i - firstVis] = cur;
+            starts[i - firstVis] = ls == 0 || text.charAt(ls - 1) == '\n';
+            logicalNums[i - firstVis] = lineOfOffset(ls);
         }
 
         // backgrounds
@@ -715,30 +829,32 @@ public class CodeEditText extends EditText {
         for (int i = firstVis; i <= lastVis; i++) {
             int y1 = top + l.getLineTop(i), y2 = top + l.getLineBottom(i);
             if (i == caretVisual) canvas.drawRect(scrollX, y1, scrollX + w, y2, lineBgPaint);
-            if (errorLines.containsKey(logicalNums[i - firstVis])) canvas.drawRect(scrollX, y1, scrollX + w, y2, errPaint);
+            if (!errorLines.isEmpty() && errorLines.containsKey(logicalNums[i - firstVis])) canvas.drawRect(scrollX, y1, scrollX + w, y2, errPaint);
         }
 
         super.onDraw(canvas);
 
-        // squiggle under error lines
+        // squiggle under error lines (only the visible part of each line)
         if (!errorLines.isEmpty()) {
-            Paint sq = new Paint(Paint.ANTI_ALIAS_FLAG);
-            sq.setColor(scheme.error);
-            sq.setStrokeWidth(UIDp(1.2f));
-            sq.setStyle(Paint.Style.STROKE);
+            squigglePaint.setColor(scheme.error);
+            squigglePaint.setStrokeWidth(UIDp(1.2f));
+            float step = UIDp(3), amp = UIDp(2);
             for (int i = firstVis; i <= lastVis; i++) {
                 if (!errorLines.containsKey(logicalNums[i - firstVis])) continue;
                 int y = top + l.getLineBottom(i) - UIDp(2);
                 float x1 = l.getLineLeft(i) + getCompoundPaddingLeft();
                 float x2 = Math.max(x1 + UIDp(12), l.getLineRight(i) + getCompoundPaddingLeft());
-                android.graphics.Path path = new android.graphics.Path();
-                path.moveTo(x1, y);
+                x1 = Math.max(x1, scrollX - step);
+                x2 = Math.min(x2, scrollX + w + step);
+                if (x2 <= x1) continue;
+                squigglePath.rewind();
+                squigglePath.moveTo(x1, y);
                 boolean up = true;
-                for (float x = x1; x < x2; x += UIDp(3)) {
-                    path.lineTo(x + UIDp(3), up ? y - UIDp(2) : y);
+                for (float x = x1; x < x2; x += step) {
+                    squigglePath.lineTo(x + step, up ? y - amp : y);
                     up = !up;
                 }
-                canvas.drawPath(path, sq);
+                canvas.drawPath(squigglePath, squigglePaint);
             }
         }
 

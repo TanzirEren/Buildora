@@ -248,7 +248,7 @@ public final class Templates {
 
         // ---- icon
         Bitmap icon = o.icon != null ? o.icon : IconUtil.loadDefault(ctx);
-        IconUtil.writeMipmaps(icon, res, o.iconRadius);
+        IconUtil.writeProjectIcon(icon, res, new File(root, ".buildora"), o.iconRadius);
 
         // ---- gradle compatibility files + housekeeping
         FileUtil.writeText(new File(root, "settings.gradle"), j(
