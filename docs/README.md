@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Platform" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
   <img alt="Language" src="https://img.shields.io/badge/projects-Java%20%2B%20XML-3F7EB8">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.1.1%20Horizon-7DB1E0">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.1.2%20Pioneer-7DB1E0">
   <img alt="Build" src="https://img.shields.io/badge/build-100%25%20on--device-E0E1A6?labelColor=1B1C21">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
@@ -54,7 +54,7 @@
 full build pipeline — so you can go from an idea to a signed, installable APK **entirely on your phone**.
 
 You write **Java** and **XML**, tap **▶ Run**, and a few seconds later the **Install** button appears. Everything — the compiler,
-the resource compiler, the dexer and the signer — runs inside the app. Nothing is uploaded anywhere.
+the resource compiler, the dexer and the signer — runs inside the app. Nothing is uploaded anywhere unless you choose to use Buildora AI.
 
 > **Who is it for?**
 > Students learning Android, developers who want to code on the go, people without access to a PC, and anyone who wants to
@@ -66,7 +66,8 @@ the resource compiler, the dexer and the signer — runs inside the app. Nothing
 
 | | |
 |---|---|
-| 🔒 **Private & offline** | Your code never leaves your device. Internet is only needed to download libraries or use Git. |
+| 🔒 **Private & offline** | Building never needs a server. Your code leaves the device only if you use Buildora AI (it goes to the provider you chose) or Git. |
+| 🤖 **Buildora AI** | Chat with the AI provider of your choice to build apps, fix bugs and auto-repair failed builds. |
 | ⚡ **Fast** | Incremental builds reuse compiled resources and recompile only the files you changed. Nothing changed? Run finishes instantly. |
 | 🧰 **A real toolchain** | The same kinds of tools professional Android builds use: **aapt2, ECJ, D8/R8, apksig** — with variants, modules, ProGuard and AAB export. |
 | 🧠 **Comfortable to code in** | Code completion, live error lines, refactoring, layout preview and a Logcat/crash viewer, built for a touch screen. |
@@ -143,6 +144,18 @@ That's it. Your project and the finished APK are saved in:
 - Maven resolver for Google Maven, Maven Central and JitPack, **AAR support**, latest-stable lookup (`group:artifact`), and your own `.jar` / `.aar` files
 - Firebase **`google-services.json`** support
 - Libraries that need an annotation processor or Gradle plugin are clearly marked
+
+### 🤖 Buildora AI
+
+Bring your own AI provider and let it help you build.
+
+- **Providers (Settings → Buildora AI):** 20 presets - OpenRouter, OmniRouter, OpenAI (GPT), Google Gemini, Groq, Anthropic, DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, NVIDIA NIM, SambaNova, Hyperbolic, SiliconFlow, Moonshot, Perplexity, Ollama, LM Studio - plus **custom providers** with your own base URL
+- **Models:** *Fetch models* from the provider, a **FREE** tag on free models, *All / Free only / None*, search, a switch for every model and every provider, test connection, default model, export/import (keys are never exported)
+- **Chat screen:** Markdown answers in a small font, **Reply** to any selected text, attach project files, device files, images, clipboard text, your selection or the last build log, model picker, stop, regenerate, edit & resend
+- **History drawer:** search, pinned chats, folders per project, your own folders, and a 3-dot menu on every chat - rename, pin, move, duplicate, export (.md), open project, clear, delete
+- **Build apps by chatting:** the AI writes the files, you see a diff for each one, then *Create project* or *Apply*. Every AI change can be **undone**
+- **In the IDE:** the AI icon next to Run opens the chat from the right with your project, open files and selection as context - find bugs, explain, optimize, write code at the cursor, add features, make layouts, review and security checks, add libraries
+- **Buildora AI Fix:** on the *Build failed* dialog tap **✦ Buildora AI Fix**. The errors and a master prompt go to the AI, it reads the project, edits the files, rebuilds and retries until it works or the round limit is reached
 
 ### 🏗️ Build system
 
@@ -221,6 +234,7 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 |---|---|
 | **Appearance** | Light / dark / follow system |
 | **Code editor** | Color scheme · font and size · tab size · word wrap · line numbers · auto-indent · auto-close · auto-save · live error check · **code completion** · symbol bar |
+| **Buildora AI** | Providers · default model · creativity · project context size · max reply length · streaming · auto-apply · auto-build after fix · fix rounds · chat text size · custom instructions |
 | **Build** | Incremental builds · build notification · auto-detect libraries · crash reporter · verify signature · 16 KB alignment · auto-increment version code · release dex mode |
 | **Signing** | Keys: generate, import, export, choose the active key |
 | **Toolchain** | aapt2 / android.jar status, import or download your own, reset, clear caches |
@@ -235,7 +249,7 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 | Permission | Why Buildora needs it |
 |---|---|
 | **All files access** | Projects and APKs are stored in `/storage/emulated/0/Buildora/` so you can reach them from any file manager |
-| **Internet** | Downloading libraries and Git operations — never for your source code |
+| **Internet** | Downloading libraries, Git operations, and talking to the AI provider you configured — your source code is sent only when you use Buildora AI |
 | **Install packages** | Installing the APK you just built |
 | **Foreground service + notifications** | Keeping a build alive in the background and showing progress, results and crash reports |
 | **Wake lock** | Keeping the CPU running while a build is in progress |
@@ -248,7 +262,7 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 - Android **8.0 (API 26)** or newer
 - An **ARM** phone is recommended (arm64 and arm32 are supported)
 - About **300 MB** of free storage, plus space for your projects
-- Internet only when adding libraries or using Git
+- Internet only when adding libraries, using Git or Buildora AI
 
 ---
 
@@ -256,6 +270,7 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 
 **Good to know today**
 
+- **Buildora AI** needs your own API key and internet. Answers can be wrong - review the diff before applying, and use **Undo**. Providers may charge for usage; *FREE* tags come from the provider and can change. The AI can only write Java + XML projects.
 - Projects are **Java + XML**. Kotlin *libraries* work as dependencies, but Kotlin source files are not compiled.
 - **No annotation processors** yet (Room's generated DAOs, Dagger/Hilt, Glide's generated API). Such libraries are marked in the catalog.
 - **Modules** are compiled together with the app (merged sources, resources and manifests).
@@ -273,6 +288,12 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 ## ❓ FAQ
 
 <details>
+<summary><b>Do I need to pay for Buildora AI?</b></summary>
+
+Buildora is free. You use your own provider account; some providers (OpenRouter, Gemini, Groq and others) offer free models or a free tier, which Buildora marks with a **FREE** tag.
+</details>
+
+<details>
 <summary><b>Is Buildora free?</b></summary>
 
 Yes. It is open source under the MIT license.
@@ -281,7 +302,7 @@ Yes. It is open source under the MIT license.
 <details>
 <summary><b>Does it need an internet connection?</b></summary>
 
-Only to download libraries (they are cached afterwards) or to use Git. Building apps without extra libraries works fully offline.
+Only to download libraries (they are cached afterwards), to use Git, or to use Buildora AI. Building apps without extra libraries works fully offline.
 </details>
 
 <details>
@@ -318,7 +339,7 @@ In the app's private storage. Passwords are kept in the app's private preference
 <details>
 <summary><b>Does the Buildora app collect my data?</b></summary>
 
-No analytics or tracking are built in. Your code stays on your device.
+No analytics or tracking are built in. Your code stays on your device unless you use **Buildora AI**: then the messages, attached files and project files you choose to send go to the AI provider you configured (not to Buildora). API keys are kept in the app's private storage.
 </details>
 
 ---
@@ -328,6 +349,7 @@ No analytics or tracking are built in. Your code stays on your device.
 | Problem | What to do |
 |---|---|
 | **Build error** | Tap an error in the list to jump to the line, or **Copy all** to share it |
+| AI says *Invalid API key* / *model not found* | Open **Settings → AI providers**, check the key and base URL, tap **Test connection**, and re-fetch the models |
 | `aapt2 cannot run` | Open **Settings → Toolchain** and import or download an `aapt2` for your CPU |
 | Projects not saving / not visible | Grant **All files access** in Android's app settings |
 | Library download fails | Check your connection, then remove or fix the dependency in **Libraries** |

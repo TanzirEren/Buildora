@@ -1,6 +1,8 @@
 package com.tenix.buildora;
 
 import android.app.AlertDialog;
+import android.widget.ImageButton;
+import android.widget.FrameLayout;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.net.Uri;
@@ -109,6 +111,13 @@ public class IdeActivity extends BaseActivity {
     private boolean matchCase, useRegex;
 
     private final List<OpenFile> tabs = new ArrayList<>();
+
+    // Buildora AI
+    private FrameLayout aiDrawer;
+    private com.tenix.buildora.ai.ChatPanel aiPanel;
+    private boolean aiOpen, aiLoopBuilding, aiHandled;
+    private int aiFixRound;
+    private BuildEngine.Result aiLastResult;
     private OpenFile current;
     private final List<Node> nodes = new ArrayList<>();
     private final Set<String> expanded = new HashSet<>();
@@ -172,6 +181,7 @@ public class IdeActivity extends BaseActivity {
     @Override protected void onPause() {
         super.onPause();
         saveAll(false);
+        if (aiPanel != null) aiPanel.onPause();
         BuildRunner.detach(this);
     }
 
@@ -182,6 +192,7 @@ public class IdeActivity extends BaseActivity {
     }
 
     @Override public void onBackPressed() {
+        if (aiOpen) { closeAi(); return; }
         if (explorerOpen) { closeExplorer(); return; }
         if (findBar.getVisibility() == View.VISIBLE) { findBar.setVisibility(View.GONE); return; }
         saveAll(false);
@@ -219,6 +230,7 @@ public class IdeActivity extends BaseActivity {
     private void setupTopBar() {
         findViewById(R.id.ibMenu).setOnClickListener(v -> { if (explorerOpen) closeExplorer(); else openExplorer(); });
         findViewById(R.id.ibRun).setOnClickListener(v -> runBuild());
+        findViewById(R.id.ibAi).setOnClickListener(v -> { if (aiOpen) closeAi(); else openAi(); });
         ibPreview.setOnClickListener(v -> previewCurrent());
         ibUndo.setOnClickListener(v -> { editor.undo(); refreshButtons(); });
         ibRedo.setOnClickListener(v -> { editor.redo(); refreshButtons(); });
@@ -427,7 +439,7 @@ public class IdeActivity extends BaseActivity {
 
     private void setupExplorer() {
         explorer.post(() -> explorer.setTranslationX(-explorer.getWidth() - UI.dp(this, 8)));
-        scrim.setOnClickListener(v -> closeExplorer());
+        scrim.setOnClickListener(v -> { if (aiOpen) closeAi(); else closeExplorer(); });
         treeAdapter = new BaseAdapter() {
             @Override public int getCount() { return nodes.size(); }
             @Override public Object getItem(int i) { return nodes.get(i); }
@@ -878,6 +890,190 @@ public class IdeActivity extends BaseActivity {
         refreshAll();
     }
 
+
+    // ------------------------------------------------------------------ Buildora AI
+
+    private void ensureAi() {
+        if (aiPanel != null) return;
+        aiDrawer = findViewById(R.id.aiDrawer);
+        int w = Math.min(UI.dp(this, 390), (int) (getResources().getDisplayMetrics().widthPixels * 0.94f));
+        aiDrawer.getLayoutParams().width = w;
+        aiDrawer.setClipToOutline(true);
+        aiPanel = new com.tenix.buildora.ai.ChatPanel(this, new com.tenix.buildora.ai.ChatPanel.Host() {
+            @Override public File projectRoot() { return root; }
+            @Override public boolean ideMode() { return true; }
+            @Override public String currentFile() {
+                return current != null && !current.image && FileUtil.isInside(root, current.file) ? FileUtil.relPath(root, current.file) : null;
+            }
+            @Override public String selection() {
+                if (current == null || current.image) return "";
+                int a = Math.min(editor.getSelectionStart(), editor.getSelectionEnd()), b = Math.max(editor.getSelectionStart(), editor.getSelectionEnd());
+                return a >= 0 && b > a && b - a <= 20000 ? editor.getText().subSequence(a, b).toString() : "";
+            }
+            @Override public List<String> openFiles() {
+                List<String> out = new ArrayList<>();
+                for (OpenFile t : tabs) if (!t.image && FileUtil.isInside(root, t.file)) out.add(FileUtil.relPath(root, t.file));
+                return out;
+            }
+            @Override public String lintInfo() { return lintMessage; }
+            @Override public void insertAtCaret(String text) { if (current != null && !current.image) editor.insertAtCursor(text); }
+            @Override public void saveAll() { IdeActivity.this.saveAll(false); }
+            @Override public void filesChanged(List<String> rel) { aiFilesChanged(rel); }
+            @Override public void runBuild() { IdeActivity.this.runBuild(); }
+            @Override public void fixFinished(boolean applied) { aiFixFinished(applied); }
+        });
+        // header: title, history, new chat, close
+        LinearLayout col = UI.vbox(this);
+        col.setFitsSystemWindows(true);
+        LinearLayout head = UI.hbox(this);
+        head.setPadding(UI.dp(this, 16), UI.dp(this, 6), UI.dp(this, 4), UI.dp(this, 2));
+        TextView t = UI.label(this, "Buildora AI", 16.5f, false);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        UI.tintIcon(this, t, R.drawable.ic_ai, R.attr.bAccent, 20);
+        head.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        ImageButton hist = new ImageButton(this, null, 0, R.style.BIconBtn);
+        hist.setImageResource(R.drawable.ic_chat);
+        hist.setOnClickListener(v -> aiHistory());
+        head.addView(hist, new LinearLayout.LayoutParams(UI.dp(this, 42), UI.dp(this, 46)));
+        ImageButton neu = new ImageButton(this, null, 0, R.style.BIconBtn);
+        neu.setImageResource(R.drawable.ic_edit);
+        neu.setOnClickListener(v -> aiPanel.newChat(root.getPath()));
+        head.addView(neu, new LinearLayout.LayoutParams(UI.dp(this, 42), UI.dp(this, 46)));
+        ImageButton more = new ImageButton(this, null, 0, R.style.BIconBtn);
+        more.setImageResource(R.drawable.ic_more);
+        more.setOnClickListener(v -> aiMore(v));
+        head.addView(more, new LinearLayout.LayoutParams(UI.dp(this, 42), UI.dp(this, 46)));
+        col.addView(head);
+        col.addView(aiPanel, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        aiDrawer.addView(col, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        aiDrawer.setTranslationX(w + UI.dp(this, 8));
+        // continue the latest chat of this project
+        for (com.tenix.buildora.ai.Chat c : com.tenix.buildora.ai.Ai.chats(this).loadAll()) {
+            if (c.projectRoot.equals(root.getPath())) { aiPanel.openChat(c); break; }
+        }
+    }
+
+    private void openAi() {
+        ensureAi();
+        if (explorerOpen) closeExplorer();
+        aiOpen = true;
+        saveAll(false);
+        aiDrawer.setVisibility(View.VISIBLE);
+        scrim.setVisibility(View.VISIBLE);
+        scrim.setAlpha(0f);
+        scrim.animate().alpha(1f).setDuration(180).start();
+        aiDrawer.animate().translationX(0).setDuration(200).start();
+        hideKeyboard();
+    }
+
+    private void closeAi() {
+        if (aiDrawer == null) return;
+        aiOpen = false;
+        scrim.animate().alpha(0f).setDuration(160).withEndAction(() -> scrim.setVisibility(View.GONE)).start();
+        aiDrawer.animate().translationX(aiDrawer.getWidth() + UI.dp(this, 8)).setDuration(180).start();
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null && aiPanel != null) imm.hideSoftInputFromWindow(aiPanel.getWindowToken(), 0);
+    }
+
+    private void aiHistory() {
+        final List<com.tenix.buildora.ai.Chat> mine = new ArrayList<>();
+        for (com.tenix.buildora.ai.Chat c : com.tenix.buildora.ai.Ai.chats(this).loadAll()) if (c.projectRoot.equals(root.getPath())) mine.add(c);
+        if (mine.isEmpty()) { UI.toast(this, "No earlier chats for this project"); return; }
+        String[] names = new String[mine.size()];
+        for (int i = 0; i < names.length; i++) names[i] = (mine.get(i).pinned ? "📌 " : "") + mine.get(i).title;
+        UI.dialog(this).setTitle("Chats of " + project.name).setItems(names, (d, w) -> aiPanel.openChat(mine.get(w)))
+                .setNeutralButton("All chats", (d, w) -> startActivity(new Intent(this, com.tenix.buildora.ai.AiChatActivity.class)
+                        .putExtra(com.tenix.buildora.ai.AiChatActivity.EXTRA_PROJECT, root.getPath())))
+                .setNegativeButton("Close", null).show();
+    }
+
+    private void aiMore(View anchor) {
+        PopupMenu pm = new PopupMenu(this, anchor);
+        pm.getMenu().add(0, 1, 0, "Open in full screen");
+        pm.getMenu().add(0, 2, 1, "Copy chat");
+        pm.getMenu().add(0, 3, 2, "AI providers");
+        pm.setOnMenuItemClickListener(mi -> {
+            if (mi.getItemId() == 1) {
+                startActivity(new Intent(this, com.tenix.buildora.ai.AiChatActivity.class)
+                        .putExtra(com.tenix.buildora.ai.AiChatActivity.EXTRA_CHAT, aiPanel.chat().id)
+                        .putExtra(com.tenix.buildora.ai.AiChatActivity.EXTRA_PROJECT, root.getPath()));
+            } else if (mi.getItemId() == 2) { UI.copy(this, "chat", aiPanel.chat().toMarkdown()); UI.toast(this, "Copied"); }
+            else startActivity(new Intent(this, com.tenix.buildora.ai.AiProvidersActivity.class));
+            return true;
+        });
+        pm.show();
+    }
+
+    /** The AI wrote, changed, moved or deleted files: refresh tabs, tree, errors and project settings. */
+    private void aiFilesChanged(List<String> rel) {
+        if (current != null && !current.image) { current.selStart = editor.getSelectionStart(); current.selEnd = editor.getSelectionEnd(); current.scrollY = editor.getScrollY(); }
+        OpenFile toShow = null;
+        for (OpenFile t : new ArrayList<>(tabs)) {
+            if (t.image || !FileUtil.isInside(root, t.file)) continue;
+            String r = FileUtil.relPath(root, t.file);
+            if (!rel.contains(r)) continue;
+            buildErrors.remove(t.file.getAbsolutePath());
+            if (!t.file.isFile()) { removeTab(t); continue; }
+            try {
+                t.text = FileUtil.readText(t.file);
+                t.dirty = false;
+                t.undo = new CodeEditText.UndoStack();
+                if (t == current) toShow = t;
+            } catch (Exception ignored) { }
+        }
+        project = Project.load(root);
+        rebuildTree();
+        if (toShow != null) switchTo(toShow);
+        else refreshAll();
+    }
+
+    /** Starts "Buildora AI Fix" for a failed build: the errors and a master prompt go to the AI chat. */
+    void startAiFix(BuildEngine.Result r) {
+        ensureAi();
+        openAi();
+        aiLastResult = r;
+        aiFixRound = 1;
+        aiPanel.startFix(r.errorText, aiDiags(r), 1);
+    }
+
+    private List<String[]> aiDiags(BuildEngine.Result r) {
+        List<String[]> out = new ArrayList<>();
+        for (BuildEngine.Diag d : r.diags) if (d.error) out.add(new String[]{d.file, String.valueOf(d.line), d.message});
+        return out;
+    }
+
+    private void aiFixFinished(boolean applied) {
+        int max = Prefs.num(this, Prefs.AI_FIXLOOPS, 3);
+        if (!applied) { aiFixRound = 0; aiLoopBuilding = false; return; }
+        if (Prefs.bool(this, Prefs.AI_AUTOBUILD, true) && aiFixRound > 0 && aiFixRound <= Math.max(1, max)) {
+            aiLoopBuilding = true;
+            aiPanel.note("🔨 Building again to check the fix (round " + aiFixRound + ")…");
+            runBuild();
+        } else aiFixRound = 0;
+    }
+
+    private void aiOnBuildFinished(BuildEngine.Result r) {
+        if (!aiLoopBuilding) return;
+        aiLoopBuilding = false;
+        if (r.cancelled) { aiFixRound = 0; return; }
+        int max = Math.max(1, Prefs.num(this, Prefs.AI_FIXLOOPS, 3));
+        if (r.success) {
+            aiPanel.note("✅ Build succeeded after " + aiFixRound + " fix round" + (aiFixRound == 1 ? "" : "s") + ".");
+            aiFixRound = 0;
+            return;
+        }
+        if (aiFixRound < max) {
+            aiFixRound++;
+            aiHandled = true;
+            final BuildEngine.Result rr = r;
+            final int round = aiFixRound;
+            aiPanel.post(() -> aiPanel.startFix(rr.errorText, aiDiags(rr), round));
+        } else {
+            aiPanel.note("⚠ Still failing after " + max + " AI fix rounds. Review the errors, or tell the AI what to try next.");
+            aiFixRound = 0;
+        }
+    }
+
     // ------------------------------------------------------------------ saving
 
     private void saveTab(OpenFile t, boolean toast) {
@@ -932,7 +1128,11 @@ public class IdeActivity extends BaseActivity {
         if (current != null && !current.image) editor.setErrors(errorsFor(current.file));
         project = Project.load(root);
         rebuildTree();
+        aiOnBuildFinished(r);
     }
+
+    /** True once when the AI fix loop took over a failed build (the error dialog is then skipped). */
+    boolean consumeAiHandled() { boolean h = aiHandled; aiHandled = false; return h; }
 
     /** Opens a file and puts the caret on a line (used by the error list). */
     void openFileAt(String path, int line) {

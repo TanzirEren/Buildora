@@ -52,6 +52,15 @@
                 android:visibility="gone" />
 
             <ImageButton
+                android:id="@+id/ibAi"
+                style="@style/BIconBtn"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:contentDescription="Buildora AI"
+                android:src="@drawable/ic_ai"
+                android:tint="?attr/bAccent" />
+
+            <ImageButton
                 android:id="@+id/ibRun"
                 style="@style/BIconBtn"
                 android:layout_width="38dp"
@@ -394,4 +403,14 @@
             android:divider="@null"
             android:scrollbars="none" />
     </LinearLayout>
+
+    <!-- Buildora AI (right side) -->
+    <FrameLayout
+        android:id="@+id/aiDrawer"
+        android:layout_width="360dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="@drawable/bg_ai_drawer"
+        android:elevation="12dp"
+        android:visibility="invisible" />
 </FrameLayout>

@@ -52,6 +52,20 @@ public final class Prefs {
     public static final String GIT_USER = "git_user";
     public static final String GIT_TOKEN = "git_token";
 
+
+    // Buildora AI
+    public static final String AI_TEMP = "ai_temperature";          // 0..100 (percent of 1.0)
+    public static final String AI_MAXTOK = "ai_max_tokens";         // 0 = provider default
+    public static final String AI_CTX = "ai_context_size";          // 0 small, 1 medium, 2 large
+    public static final String AI_STREAM = "ai_stream";
+    public static final String AI_SEND_CTX = "ai_send_project";
+    public static final String AI_AUTOAPPLY = "ai_auto_apply";
+    public static final String AI_AUTOBUILD = "ai_auto_build_fix";
+    public static final String AI_FIXLOOPS = "ai_fix_rounds";
+    public static final String AI_FONT = "ai_font_size";
+    public static final String AI_EXTRA = "ai_extra_instructions";
+    public static final String AI_AUTOTITLE = "ai_auto_title";
+
     public static final String AAPT2_CUSTOM = "aapt2_custom";
     public static final String JAR_CUSTOM = "androidjar_custom";
     public static final String TOOLCHAIN_VER = "toolchain_version";

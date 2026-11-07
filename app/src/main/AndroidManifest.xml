@@ -42,6 +42,10 @@
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode" />
 
         <activity android:name=".SettingsActivity" android:exported="false" />
+        <activity android:name=".ai.AiChatActivity" android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".ai.AiProvidersActivity" android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".VariantsActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ModulesActivity" android:exported="false"

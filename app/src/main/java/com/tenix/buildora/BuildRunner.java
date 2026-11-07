@@ -66,6 +66,7 @@ final class BuildRunner {
         act.onBuildFinished(r);
         if (r.success) showSuccess(act, p, r);
         else if (r.cancelled) UI.toast(act, "Build cancelled");
+        else if (act.consumeAiHandled()) { /* the AI fix loop continues in the chat */ }
         else showErrors(act, p, r);
     }
 
@@ -301,7 +302,24 @@ final class BuildRunner {
         close.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { d[0].dismiss(); }
         });
-        d[0] = UI.dialog(act).setTitle("Build failed").setView(box).create();
+        // title row with the "Buildora AI Fix" shortcut in the top-right corner
+        LinearLayout titleRow = UI.hbox(act);
+        titleRow.setPadding(UI.dp(act, 22), UI.dp(act, 18), UI.dp(act, 14), UI.dp(act, 6));
+        TextView tt = UI.label(act, "Build failed", 20, false);
+        tt.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        titleRow.addView(tt, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView aiFix = new TextView(act);
+        aiFix.setText("✦ Buildora AI Fix");
+        aiFix.setTextSize(12.5f);
+        aiFix.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        aiFix.setTextColor(UI.color(act, R.attr.bOnAccent));
+        aiFix.setBackgroundResource(R.drawable.bg_btn_primary);
+        aiFix.setPadding(UI.dp(act, 12), UI.dp(act, 7), UI.dp(act, 12), UI.dp(act, 7));
+        aiFix.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { d[0].dismiss(); act.startAiFix(r); }
+        });
+        titleRow.addView(aiFix);
+        d[0] = UI.dialog(act).setCustomTitle(titleRow).setView(box).create();
         d[0].show();
     }
 

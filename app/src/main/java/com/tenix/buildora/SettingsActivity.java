@@ -61,6 +61,32 @@ public class SettingsActivity extends BaseActivity {
         render();
     }
 
+
+    // ------------------------------------------------------------------ Buildora AI
+
+    private void aiSection() {
+        final com.tenix.buildora.ai.ProviderStore ps = com.tenix.buildora.ai.Ai.providers(this);
+        int active = ps.active().size();
+        actionRow("AI providers", ps.count() == 0 ? "Add OpenRouter, Gemini, Groq, OpenAI or your own provider"
+                : ps.count() + " providers · " + active + " active", () -> startActivity(new android.content.Intent(this, com.tenix.buildora.ai.AiProvidersActivity.class)));
+        String[] d = ps.resolveDefault();
+        com.tenix.buildora.ai.AiProvider dp = d == null ? null : ps.get(d[0]);
+        actionRow("Default model", d == null ? "No model yet" : (dp == null ? "" : dp.name + " · ") + d[1], () ->
+                com.tenix.buildora.ai.ModelPicker.show(this, d == null ? "" : d[0], d == null ? "" : d[1], (p, m) -> { ps.setDefault(p.id, m.id); render(); }));
+        actionRow("Open Buildora AI chat", "Build and fix apps by chatting", () -> startActivity(new android.content.Intent(this, com.tenix.buildora.ai.AiChatActivity.class)));
+        sliderRow("Creativity (temperature)", Prefs.AI_TEMP, 0, 100, 30, " %");
+        choiceRow("Project context sent to AI", Prefs.AI_CTX, new String[]{"Small (12k characters)", "Medium (40k characters)", "Large (120k characters)"}, 1, null);
+        maxTokensRow();
+        switchRow("Stream replies", "Show the answer while it is written", Prefs.AI_STREAM, true, null);
+        switchRow("Send project files with messages", "Lets the AI read your project (turn off to chat only)", Prefs.AI_SEND_CTX, true, null);
+        switchRow("Auto-apply AI file changes", "Write the AI's files without asking (Undo is always available)", Prefs.AI_AUTOAPPLY, false, null);
+        switchRow("Auto-build after AI Fix", "Run the build again after a fix and retry if it still fails", Prefs.AI_AUTOBUILD, true, null);
+        choiceRow("Max auto-fix rounds", Prefs.AI_FIXLOOPS, new String[]{"0", "1", "2", "3", "4", "5"}, 3, null);
+        switchRow("Name chats automatically", "Use the first message as the chat title", Prefs.AI_AUTOTITLE, true, null);
+        sliderRow("Chat text size", Prefs.AI_FONT, 11, 18, 13, " sp");
+        textRow("Custom instructions", Prefs.AI_EXTRA, "e.g. always comment in English, use ArrayList not arrays", false);
+    }
+
     // ------------------------------------------------------------------ rows
 
     private void section(String t) {
@@ -124,8 +150,24 @@ public class SettingsActivity extends BaseActivity {
         }).show());
     }
 
+    private static boolean isIntKey(String key) { return key.equals(Prefs.DEF_RADIUS) || key.equals(Prefs.AI_TEMP); }
+
+    private void maxTokensRow() {
+        final int[] vals = {0, 1024, 2048, 4096, 8192, 16384, 32768};
+        final String[] labels = {"Provider default", "1,024 tokens", "2,048 tokens", "4,096 tokens", "8,192 tokens", "16,384 tokens", "32,768 tokens"};
+        int cur = Prefs.num(this, Prefs.AI_MAXTOK, 0), sel = 0;
+        for (int i = 0; i < vals.length; i++) if (vals[i] == cur) sel = i;
+        final int fsel = sel;
+        LinearLayout r = row("Max reply length", labels[sel]);
+        r.setOnClickListener(v -> UI.dialog(this).setTitle("Max reply length").setSingleChoiceItems(labels, fsel, (d, which) -> {
+            Prefs.put(this, Prefs.AI_MAXTOK, vals[which]);
+            d.dismiss();
+            render();
+        }).show());
+    }
+
     private void sliderRow(final String title, final String key, final int min, final int max, final int def, final String unit) {
-        final int cur = key.equals(Prefs.DEF_RADIUS) ? Prefs.num(this, key, def) : Math.round(Prefs.flt(this, key, def));
+        final int cur = isIntKey(key) ? Prefs.num(this, key, def) : Math.round(Prefs.flt(this, key, def));
         LinearLayout r = row(title, cur + unit);
         r.setOnClickListener(v -> {
             LinearLayout box = UI.vbox(this);
@@ -145,7 +187,7 @@ public class SettingsActivity extends BaseActivity {
             UI.dialog(this).setTitle(title).setView(box).setNegativeButton("Cancel", null)
                     .setPositiveButton("OK", (d, w) -> {
                         int v2 = sb.getProgress() + min;
-                        if (key.equals(Prefs.DEF_RADIUS)) Prefs.put(this, key, v2); else Prefs.put(this, key, (float) v2);
+                        if (isIntKey(key)) Prefs.put(this, key, v2); else Prefs.put(this, key, (float) v2);
                         render();
                     }).show();
         });
@@ -261,6 +303,9 @@ public class SettingsActivity extends BaseActivity {
         switchRow("Show hidden files", "Files starting with a dot (.git, .buildora)", Prefs.SHOW_HIDDEN, false, null);
         switchRow("Confirm before deleting", null, Prefs.CONFIRM_DELETE, true, null);
 
+        section("Buildora AI");
+        aiSection();
+
         section("Build");
         switchRow("Auto-detect libraries", "Add libraries your imports and layouts need before each build", Prefs.AUTO_LIBS, true, null);
         switchRow("Crash reporter in debug builds", "Apps you build report crashes to Buildora > Logcat", Prefs.CRASH_REPORTS, true, null);
@@ -326,7 +371,7 @@ public class SettingsActivity extends BaseActivity {
         actionRow("Storage permission", Perm.hasStorage(this) ? "Granted" : "Not granted - tap to allow", () -> Perm.requestStorage(this, 21));
 
         section("About");
-        actionRow("Buildora 2.1.1", "Developer Tanzir", () -> { });
+        actionRow("Buildora 2.1.2 Pioneer", "Developer Tanzir", () -> { });
         contactIcons();
 
         scroll.post(() -> scroll.scrollTo(0, sy));

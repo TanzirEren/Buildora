@@ -31,11 +31,24 @@ Buildora itself is written in Java + XML and is built with GitHub Actions.
 
 ## Download
 
-Get the latest `Buildora.apk` (v2.1.1 Horizon) from the **[Releases](../../releases)** page and install it.
+Get the latest `Buildora.apk` (v2.1.2 Pioneer) from the **[Releases](../../releases)** page and install it.
 Android asks you to allow installing from your browser/file manager the first time.
 
 **Requirements:** Android 8.0 (API 26) or newer, an ARM phone, ~300 MB free storage.
 On first launch allow **All files access** — projects are stored in shared storage so you can reach them from any file manager.
+
+## What's new in v2.1.2 "Pioneer"
+
+**Buildora AI** - build and fix apps by chatting, with your own AI provider.
+
+- **AI providers** (Settings, before *Build*): 20 presets (OpenRouter, OmniRouter, OpenAI, Gemini, Groq, Anthropic, DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, NVIDIA NIM, SambaNova, Hyperbolic, SiliconFlow, Moonshot, Perplexity, Ollama, LM Studio) and **custom providers** (name, base URL, API key, model ids line by line). **Fetch models**, a **FREE** tag, *All / Free only / None*, per-model and per-provider switches, test connection, default model, import/export (without keys).
+- **Chat screen** (FAB → *Build with Buildora AI*): Markdown replies in a small font, select any text and tap **Reply**, attachments (project files, device files, images, clipboard, selection, build log), model picker, stop, regenerate, edit & resend.
+- **Chat history drawer**: search, pinned chats, project folders, custom folders, and a 3-dot menu per chat (rename, pin, move, duplicate, export, open project, clear, delete).
+- **Build an app in chat**: the AI writes the files, you review the diff, tap *Create project*, then open it in the IDE. **Undo** any AI change.
+- **In the IDE**: the AI icon left of Run opens the same chat from the right, with the project, open files and your selection as context, *Find bugs*, *Write code*, *Insert at cursor*, and more.
+- **Buildora AI Fix**: on the *Build failed* dialog, send the errors and a master prompt to the AI; it reads the project, fixes the files, rebuilds and retries (up to the number of rounds you choose).
+
+Your code is sent to the provider **you** choose only when you use Buildora AI. API keys stay in the app's private storage.
 
 ## What's new in v2.1.1 "Horizon"
 

@@ -175,10 +175,10 @@ public class MainActivity extends BaseActivity {
         LinearLayout box = UI.vbox(this);
         box.setPadding(UI.dp(this, 16), UI.dp(this, 8), UI.dp(this, 16), UI.dp(this, 8));
         final AlertDialog[] dlg = new AlertDialog[1];
-        String[] titles = {"New project", "Import project", "Clone repository"};
-        String[] subs = {"Start from a buildable template", "Pick a folder from storage", "Clone from a Git URL"};
-        int[] icons = {R.drawable.ic_add, R.drawable.ic_import, R.drawable.ic_git};
-        for (int k = 0; k < 3; k++) {
+        String[] titles = {"New project", "Import project", "Clone repository", "Build with Buildora AI"};
+        String[] subs = {"Start from a buildable template", "Pick a folder from storage", "Clone from a Git URL", "Describe an app and let AI write it"};
+        int[] icons = {R.drawable.ic_add, R.drawable.ic_import, R.drawable.ic_git, R.drawable.ic_ai};
+        for (int k = 0; k < 4; k++) {
             final int which = k;
             LinearLayout row = UI.hbox(this);
             row.setBackgroundResource(R.drawable.bg_ripple_rect);
@@ -198,7 +198,8 @@ public class MainActivity extends BaseActivity {
                     dlg[0].dismiss();
                     if (which == 0) newProjectDialog();
                     else if (which == 1) importProject();
-                    else cloneDialog();
+                    else if (which == 2) cloneDialog();
+                    else startActivity(new Intent(MainActivity.this, com.tenix.buildora.ai.AiChatActivity.class));
                 }
             });
             box.addView(row);
