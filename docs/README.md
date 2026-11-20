@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Platform" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
   <img alt="Language" src="https://img.shields.io/badge/projects-Java%20%2B%20XML-3F7EB8">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.1.2%20Pioneer-7DB1E0">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.1.3%20Catalyst-7DB1E0">
   <img alt="Build" src="https://img.shields.io/badge/build-100%25%20on--device-E0E1A6?labelColor=1B1C21">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
@@ -150,11 +150,19 @@ That's it. Your project and the finished APK are saved in:
 Bring your own AI provider and let it help you build.
 
 - **Providers (Settings → Buildora AI):** 20 presets - OpenRouter, OmniRouter, OpenAI (GPT), Google Gemini, Groq, Anthropic, DeepSeek, Mistral, xAI, Together, Fireworks, Cerebras, NVIDIA NIM, SambaNova, Hyperbolic, SiliconFlow, Moonshot, Perplexity, Ollama, LM Studio - plus **custom providers** with your own base URL
+- **Several API keys per provider:** add as many as you want. When a key reaches its limit, runs out of credit or is rejected, Buildora switches to the next one automatically (even in the middle of a conversation) and tells you. Each key shows its state, can be switched off, tested one by one, and limits can be reset
 - **Models:** *Fetch models* from the provider, a **FREE** tag on free models, *All / Free only / None*, search, a switch for every model and every provider, test connection, default model, export/import (keys are never exported)
-- **Chat screen:** Markdown answers in a small font, **Reply** to any selected text, attach project files, device files, images, clipboard text, your selection or the last build log, model picker, stop, regenerate, edit & resend
+- **Chat screen:** Markdown answers in a small font, **Reply** to any selected text, model picker, stop, regenerate, edit & resend
+- **Animated thinking & writing:** a live status line shows what the AI is doing - which file it is writing, tokens and speed
+- **Files as paths:** code the AI writes for your project shows as a compact file row (path, lines, new/edit). Tap a path to open its code
+- **Token counter:** a small box in the chat header counts the tokens of the chat; tap it for sent / written / last reply / next request / all-time totals
+- **Works in the background:** replies keep coming while the app is closed or the phone is locked. A notification shows progress (with *Stop*) and tells you when the answer is ready. Turn it off in Settings if you prefer
+- **Attach anything:** many Gallery pictures at once, camera, files of any type, project files, current file, selection, last build log, clipboard text or picture, and files shared from other apps. Everything appears as tiles above the message box
+- **The AI understands your attachments:** pictures (vision models), PDF pages, text/code/JSON/CSV of any extension, Word, Excel, PowerPoint and OpenDocument text, archive listings, and a safe summary of unknown binary files. Pictures also come with their size and dominant colours so models without vision can still use them
+- **The AI uses your attachments:** *import* a picture or file into your project (for example a logo into `res/drawable`), ask it to rebuild a design from a screenshot, or to work with your data files. Files stay available for the whole chat
 - **History drawer:** search, pinned chats, folders per project, your own folders, and a 3-dot menu on every chat - rename, pin, move, duplicate, export (.md), open project, clear, delete
 - **Build apps by chatting:** the AI writes the files, you see a diff for each one, then *Create project* or *Apply*. Every AI change can be **undone**
-- **In the IDE:** the AI icon next to Run opens the chat from the right with your project, open files and selection as context - find bugs, explain, optimize, write code at the cursor, add features, make layouts, review and security checks, add libraries
+- **In the IDE:** the AI icon next to Run opens the chat from the right (the icon breathes while the AI is working) with your project, open files and selection as context - find bugs, explain, optimize, write code at the cursor, add features, make layouts, review and security checks, add libraries
 - **Buildora AI Fix:** on the *Build failed* dialog tap **✦ Buildora AI Fix**. The errors and a master prompt go to the AI, it reads the project, edits the files, rebuilds and retries until it works or the round limit is reached
 
 ### 🏗️ Build system
@@ -234,7 +242,7 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 |---|---|
 | **Appearance** | Light / dark / follow system |
 | **Code editor** | Color scheme · font and size · tab size · word wrap · line numbers · auto-indent · auto-close · auto-save · live error check · **code completion** · symbol bar |
-| **Buildora AI** | Providers · default model · creativity · project context size · max reply length · streaming · auto-apply · auto-build after fix · fix rounds · chat text size · custom instructions |
+| **Buildora AI** | Providers & API keys · default model · creativity · project context size · max reply length · **background work** · **finish notification** · **token counter** · **attached picture size** · **PDF pages** · streaming · auto-apply · auto-build after fix · fix rounds · chat text size · custom instructions |
 | **Build** | Incremental builds · build notification · auto-detect libraries · crash reporter · verify signature · 16 KB alignment · auto-increment version code · release dex mode |
 | **Signing** | Keys: generate, import, export, choose the active key |
 | **Toolchain** | aapt2 / android.jar status, import or download your own, reset, clear caches |
@@ -251,8 +259,8 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 | **All files access** | Projects and APKs are stored in `/storage/emulated/0/Buildora/` so you can reach them from any file manager |
 | **Internet** | Downloading libraries, Git operations, and talking to the AI provider you configured — your source code is sent only when you use Buildora AI |
 | **Install packages** | Installing the APK you just built |
-| **Foreground service + notifications** | Keeping a build alive in the background and showing progress, results and crash reports |
-| **Wake lock** | Keeping the CPU running while a build is in progress |
+| **Foreground service + notifications** | Keeping a build or an AI reply alive in the background and showing progress, results and crash reports |
+| **Wake lock** | Keeping the CPU running while a build or an AI reply is in progress |
 | **Read logs** *(optional)* | Only if you grant it yourself, to show other apps' logs in Logcat |
 
 ---
@@ -270,7 +278,7 @@ Other variants build to `MyApp-<variant>.apk` (and `.aab` for bundles) in the sa
 
 **Good to know today**
 
-- **Buildora AI** needs your own API key and internet. Answers can be wrong - review the diff before applying, and use **Undo**. Providers may charge for usage; *FREE* tags come from the provider and can change. The AI can only write Java + XML projects.
+- **Buildora AI** needs your own API key and internet. Answers can be wrong - review the diff before applying, and use **Undo**. Providers may charge for usage; *FREE* tags come from the provider and can change. The AI can only write Java + XML projects. Pictures need a model with vision; PDFs are sent as page pictures (text-only models cannot read them). Token numbers are the provider's when it reports them, otherwise estimates. Imported attachments are copied unchanged (no resizing or format conversion). Background work needs the notification permission on Android 13+ and can be stopped by aggressive battery savers.
 - Projects are **Java + XML**. Kotlin *libraries* work as dependencies, but Kotlin source files are not compiled.
 - **No annotation processors** yet (Room's generated DAOs, Dagger/Hilt, Glide's generated API). Such libraries are marked in the catalog.
 - **Modules** are compiled together with the app (merged sources, resources and manifests).
@@ -339,7 +347,7 @@ In the app's private storage. Passwords are kept in the app's private preference
 <details>
 <summary><b>Does the Buildora app collect my data?</b></summary>
 
-No analytics or tracking are built in. Your code stays on your device unless you use **Buildora AI**: then the messages, attached files and project files you choose to send go to the AI provider you configured (not to Buildora). API keys are kept in the app's private storage.
+No analytics or tracking are built in. Your code stays on your device unless you use **Buildora AI**: then the messages, attached files and project files you choose to send go to the AI provider you configured (not to Buildora). API keys are kept in the app's private storage (not encrypted). Pictures and files you attach are copied into the app's private storage for that chat and removed when you delete the chat.
 </details>
 
 ---

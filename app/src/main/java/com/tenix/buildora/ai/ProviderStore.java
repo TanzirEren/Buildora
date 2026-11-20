@@ -35,9 +35,14 @@ public final class ProviderStore {
             List<Object> arr = MiniJson.array(root.get("providers"));
             if (arr != null) for (Object o : arr) {
                 Map<String, Object> m = MiniJson.object(o);
-                if (m != null) providers.add(AiProvider.fromMap(m));
+                if (m != null) providers.add(hook(AiProvider.fromMap(m)));
             }
         } catch (Exception ignored) { }
+    }
+
+    private AiProvider hook(AiProvider p) {
+        p.onChange = new Runnable() { @Override public void run() { save(); } };
+        return p;
     }
 
     public synchronized void save() {
@@ -60,7 +65,7 @@ public final class ProviderStore {
     }
 
     public synchronized void add(AiProvider p) {
-        providers.add(p);
+        providers.add(hook(p));
         if (defProvider.isEmpty()) ensureDefault();
         save();
     }
@@ -72,8 +77,8 @@ public final class ProviderStore {
     }
 
     public synchronized void replace(AiProvider p) {
-        for (int i = 0; i < providers.size(); i++) if (providers.get(i).id.equals(p.id)) { providers.set(i, p); save(); return; }
-        providers.add(p);
+        for (int i = 0; i < providers.size(); i++) if (providers.get(i).id.equals(p.id)) { providers.set(i, hook(p)); save(); return; }
+        providers.add(hook(p));
         save();
     }
 
@@ -136,7 +141,7 @@ public final class ProviderStore {
                 if (m == null) continue;
                 AiProvider p = AiProvider.fromMap(m);
                 p.id = AiProvider.newId();
-                providers.add(p);
+                providers.add(hook(p));
                 n++;
             }
             if (n > 0) { ensureDefault(); save(); }

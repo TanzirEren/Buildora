@@ -58,6 +58,7 @@ import com.tenix.buildora.core.Prefs;
 import com.tenix.buildora.core.Project;
 import com.tenix.buildora.core.ProjectStore;
 import com.tenix.buildora.core.Templates;
+import com.tenix.buildora.core.MenuSheet;
 import com.tenix.buildora.core.UI;
 import com.tenix.buildora.editor.CodeEditText;
 import com.tenix.buildora.editor.EditorScheme;
@@ -115,6 +116,8 @@ public class IdeActivity extends BaseActivity {
     // Buildora AI
     private FrameLayout aiDrawer;
     private com.tenix.buildora.ai.ChatPanel aiPanel;
+    private TextView aiTokens;
+    private android.animation.ObjectAnimator aiPulse;
     private boolean aiOpen, aiLoopBuilding, aiHandled;
     private int aiFixRound;
     private BuildEngine.Result aiLastResult;
@@ -162,6 +165,7 @@ public class IdeActivity extends BaseActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (aiPanel != null && aiOpen) aiPanel.onResume();
         if (editor != null) applyEditorPrefs();
         if (root != null) {
             Project fresh = Project.load(root);
@@ -176,6 +180,11 @@ public class IdeActivity extends BaseActivity {
         String r = intent.getStringExtra("root");
         setIntent(intent);
         if (r != null && root != null && !r.equals(root.getAbsolutePath())) recreate();   // notification for another project
+    }
+
+    @Override protected void onDestroy() {
+        if (aiPanel != null) aiPanel.detach();
+        super.onDestroy();
     }
 
     @Override protected void onPause() {
@@ -249,17 +258,41 @@ public class IdeActivity extends BaseActivity {
     }
 
     private void showMoreMenu(View anchor) {
-        PopupMenu pm = new PopupMenu(this, anchor);
-        Menu m = pm.getMenu();
-        String[] items = {"Find & replace", "Go to line", "Format code", "Save all", "Close all files",
-                "Rename symbol", "Extract method", "Organize imports",
-                "Build variants", "Modules", "Libraries", "Detect libraries", "ProGuard rules", "Export AAB (bundle)", "Logcat",
-                "Project settings", "App icon", "Signing keys",
-                "Git: status", "Git: commit", "Git: pull", "Git: push",
-                "Clean project", "Last build log", "Install built APK", "Settings"};
-        for (int i = 0; i < items.length; i++) m.add(0, i, i, items[i]);
-        pm.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
+        MenuSheet ms = new MenuSheet(this)
+                .header("Edit")
+                .add(0, R.drawable.mi_search, "Find & replace")
+                .add(1, R.drawable.mi_goto, "Go to line")
+                .add(2, R.drawable.mi_format, "Format code")
+                .add(3, R.drawable.mi_save, "Save all")
+                .add(4, R.drawable.mi_x_square, "Close all files")
+                .divider().header("Refactor")
+                .add(5, R.drawable.mi_rename, "Rename symbol")
+                .add(6, R.drawable.mi_extract, "Extract method")
+                .add(7, R.drawable.mi_list, "Organize imports")
+                .divider().header("Build")
+                .add(8, R.drawable.mi_layers, "Build variants")
+                .add(9, R.drawable.mi_boxes, "Modules")
+                .add(10, R.drawable.mi_package, "Libraries")
+                .add(11, R.drawable.mi_scan, "Detect libraries")
+                .add(12, R.drawable.mi_shield, "ProGuard rules")
+                .add(13, R.drawable.mi_archive, "Export AAB (bundle)")
+                .add(14, R.drawable.mi_terminal, "Logcat")
+                .divider().header("Project")
+                .add(15, R.drawable.mi_sliders, "Project settings")
+                .add(16, R.drawable.mi_image, "App icon")
+                .add(17, R.drawable.mi_key, "Signing keys")
+                .divider().header("Git")
+                .add(18, R.drawable.mi_checklist, "Status")
+                .add(19, R.drawable.mi_commit, "Commit")
+                .add(20, R.drawable.mi_download, "Pull")
+                .add(21, R.drawable.mi_upload, "Push")
+                .divider().header("Tools")
+                .add(22, R.drawable.mi_broom, "Clean project")
+                .add(23, R.drawable.mi_file_text, "Last build log")
+                .add(24, R.drawable.mi_phone, "Install built APK")
+                .add(25, R.drawable.mi_gear, "Settings");
+        ms.show(anchor, id -> {
+            switch (id) {
                 case 0: showFind(); break;
                 case 1: gotoLineDialog(); break;
                 case 2: if (current != null && !current.image) { editor.formatDocument(); } break;
@@ -287,9 +320,7 @@ public class IdeActivity extends BaseActivity {
                 case 24: installBuilt(); break;
                 case 25: startActivity(new Intent(this, SettingsActivity.class)); break;
             }
-            return true;
         });
-        pm.show();
     }
 
     private void openScreen(Class<?> c) {
@@ -921,6 +952,9 @@ public class IdeActivity extends BaseActivity {
             @Override public void filesChanged(List<String> rel) { aiFilesChanged(rel); }
             @Override public void runBuild() { IdeActivity.this.runBuild(); }
             @Override public void fixFinished(boolean applied) { aiFixFinished(applied); }
+            @Override public void usageChanged() { if (aiPanel != null) com.tenix.buildora.ai.TokenBadge.set(aiTokens, aiPanel.totalTokens()); }
+            @Override public void chatChanged(com.tenix.buildora.ai.Chat c) { if (aiPanel != null) com.tenix.buildora.ai.TokenBadge.set(aiTokens, aiPanel.totalTokens()); }
+            @Override public void busyChanged(boolean busy) { aiBusyPulse(busy); }
         });
         // header: title, history, new chat, close
         LinearLayout col = UI.vbox(this);
@@ -935,6 +969,10 @@ public class IdeActivity extends BaseActivity {
         hist.setImageResource(R.drawable.ic_chat);
         hist.setOnClickListener(v -> aiHistory());
         head.addView(hist, new LinearLayout.LayoutParams(UI.dp(this, 42), UI.dp(this, 46)));
+        aiTokens = com.tenix.buildora.ai.TokenBadge.create(this, v -> aiPanel.showUsage());
+        LinearLayout.LayoutParams tbl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tbl.rightMargin = UI.dp(this, 2);
+        head.addView(aiTokens, tbl);
         ImageButton neu = new ImageButton(this, null, 0, R.style.BIconBtn);
         neu.setImageResource(R.drawable.ic_edit);
         neu.setOnClickListener(v -> aiPanel.newChat(root.getPath()));
@@ -951,12 +989,32 @@ public class IdeActivity extends BaseActivity {
         for (com.tenix.buildora.ai.Chat c : com.tenix.buildora.ai.Ai.chats(this).loadAll()) {
             if (c.projectRoot.equals(root.getPath())) { aiPanel.openChat(c); break; }
         }
+        com.tenix.buildora.ai.TokenBadge.set(aiTokens, aiPanel.totalTokens());
+    }
+
+    /** The AI icon in the top bar breathes while a reply is being written, also when the panel is closed. */
+    private void aiBusyPulse(boolean busy) {
+        ImageButton b = findViewById(R.id.ibAi);
+        if (b == null) return;
+        if (busy) {
+            if (aiPulse == null) {
+                aiPulse = android.animation.ObjectAnimator.ofFloat(b, View.ALPHA, 1f, 0.35f);
+                aiPulse.setDuration(700);
+                aiPulse.setRepeatCount(android.animation.ObjectAnimator.INFINITE);
+                aiPulse.setRepeatMode(android.animation.ObjectAnimator.REVERSE);
+            }
+            if (!aiPulse.isRunning()) aiPulse.start();
+        } else if (aiPulse != null) {
+            aiPulse.cancel();
+            b.setAlpha(1f);
+        }
     }
 
     private void openAi() {
         ensureAi();
         if (explorerOpen) closeExplorer();
         aiOpen = true;
+        aiPanel.setVisible(true);
         saveAll(false);
         aiDrawer.setVisibility(View.VISIBLE);
         scrim.setVisibility(View.VISIBLE);
@@ -969,6 +1027,7 @@ public class IdeActivity extends BaseActivity {
     private void closeAi() {
         if (aiDrawer == null) return;
         aiOpen = false;
+        if (aiPanel != null) aiPanel.setVisible(false);
         scrim.animate().alpha(0f).setDuration(160).withEndAction(() -> scrim.setVisibility(View.GONE)).start();
         aiDrawer.animate().translationX(aiDrawer.getWidth() + UI.dp(this, 8)).setDuration(180).start();
         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
@@ -988,20 +1047,21 @@ public class IdeActivity extends BaseActivity {
     }
 
     private void aiMore(View anchor) {
-        PopupMenu pm = new PopupMenu(this, anchor);
-        pm.getMenu().add(0, 1, 0, "Open in full screen");
-        pm.getMenu().add(0, 2, 1, "Copy chat");
-        pm.getMenu().add(0, 3, 2, "AI providers");
-        pm.setOnMenuItemClickListener(mi -> {
-            if (mi.getItemId() == 1) {
-                startActivity(new Intent(this, com.tenix.buildora.ai.AiChatActivity.class)
-                        .putExtra(com.tenix.buildora.ai.AiChatActivity.EXTRA_CHAT, aiPanel.chat().id)
-                        .putExtra(com.tenix.buildora.ai.AiChatActivity.EXTRA_PROJECT, root.getPath()));
-            } else if (mi.getItemId() == 2) { UI.copy(this, "chat", aiPanel.chat().toMarkdown()); UI.toast(this, "Copied"); }
-            else startActivity(new Intent(this, com.tenix.buildora.ai.AiProvidersActivity.class));
-            return true;
-        });
-        pm.show();
+        new MenuSheet(this)
+                .add(1, R.drawable.mi_expand, "Open in full screen")
+                .add(2, R.drawable.mi_copy, "Copy chat")
+                .add(4, R.drawable.mi_stats, "Token usage")
+                .divider()
+                .add(3, R.drawable.mi_server, "AI providers & keys")
+                .show(anchor, id -> {
+                    if (id == 1) {
+                        startActivity(new Intent(this, com.tenix.buildora.ai.AiChatActivity.class)
+                                .putExtra(com.tenix.buildora.ai.AiChatActivity.EXTRA_CHAT, aiPanel.chat().id)
+                                .putExtra(com.tenix.buildora.ai.AiChatActivity.EXTRA_PROJECT, root.getPath()));
+                    } else if (id == 2) { UI.copy(this, "chat", aiPanel.chat().toMarkdown()); UI.toast(this, "Copied"); }
+                    else if (id == 4) aiPanel.showUsage();
+                    else startActivity(new Intent(this, com.tenix.buildora.ai.AiProvidersActivity.class));
+                });
     }
 
     /** The AI wrote, changed, moved or deleted files: refresh tabs, tree, errors and project settings. */

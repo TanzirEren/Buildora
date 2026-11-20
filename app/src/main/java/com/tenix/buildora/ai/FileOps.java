@@ -28,10 +28,12 @@ public final class FileOps {
         public String error;       // set when this change cannot be applied
         public int added, removed;
         public boolean selected = true;
+        public File srcFile;       // ASSET: attachment copied into the project
+        public boolean asset;
 
         public boolean ok() { return error == null && kind != SAME; }
         public String kindLabel() {
-            switch (kind) { case NEW: return "New"; case MODIFY: return "Edit"; case DELETE: return "Delete"; case RENAME: return "Move"; default: return "Same"; }
+            switch (kind) { case NEW: return asset ? "Import" : "New"; case MODIFY: return asset ? "Replace" : "Edit"; case DELETE: return "Delete"; case RENAME: return "Move"; default: return "Same"; }
         }
     }
 
@@ -67,7 +69,42 @@ public final class FileOps {
         }
     }
 
-    public static List<Change> plan(File root, List<Protocol.Op> ops) {
+    public static List<Change> plan(File root, List<Protocol.Op> ops) { return plan(root, ops, null); }
+
+    private static final String[] ASSET_EXT = {"png", "jpg", "jpeg", "webp", "gif", "bmp", "ttf", "otf", "xml", "json", "txt", "csv", "md", "html", "css", "js",
+            "mp3", "ogg", "wav", "mp4", "pdf", "svg", "properties", "so", "bin", "dat", "db", "pro", "kt", "java"};
+
+    private static boolean assetExtOk(String path) {
+        String e = FileDigest.ext(path);
+        for (String a : ASSET_EXT) if (a.equals(e)) return true;
+        return false;
+    }
+
+    /** Finds a stored attachment by name (exact, then case-insensitive). */
+    static File findAttachment(File attachDir, String name) {
+        if (attachDir == null || name == null || name.isEmpty()) return null;
+        File f = new File(attachDir, name);
+        if (f.isFile()) return f;
+        File[] fs = attachDir.listFiles();
+        if (fs != null) for (File x : fs) if (x.isFile() && x.getName().equalsIgnoreCase(name)) return x;
+        return null;
+    }
+
+    /** True for res/ files whose name Android would reject (aapt2 wants lowercase letters, digits, underscore). */
+    static String resNameProblem(String path) {
+        int i = path.indexOf("/res/");
+        String rel = i >= 0 ? path.substring(i + 5) : path.startsWith("res/") ? path.substring(4) : null;
+        if (rel == null) return null;
+        int sl = rel.lastIndexOf('/');
+        String dir = sl < 0 ? "" : rel.substring(0, sl), file = sl < 0 ? rel : rel.substring(sl + 1);
+        if (dir.startsWith("values")) return null;
+        int dot = file.indexOf('.');
+        String base = dot < 0 ? file : file.substring(0, dot);
+        if (!base.matches("[a-z][a-z0-9_]*")) return "Resource file names must be lowercase letters, digits and _ (start with a letter)";
+        return null;
+    }
+
+    public static List<Change> plan(File root, List<Protocol.Op> ops, File attachDir) {
         List<Change> out = new ArrayList<>();
         Map<String, String> virtual = new LinkedHashMap<>();     // later ops see earlier results of this reply
         Set<String> deleted = new LinkedHashSet<>();
@@ -80,6 +117,27 @@ public final class FileOps {
             try {
                 if (!FileUtil.isInside(root, f)) { c.kind = SAME; c.error = "Path is outside the project"; out.add(c); continue; }
             } catch (Exception e) { c.kind = SAME; c.error = "Bad path"; out.add(c); continue; }
+            if (op.type == Protocol.ASSET) {
+                c.asset = true;
+                c.path = op.to;
+                f = new File(root, c.path);
+                try { if (!FileUtil.isInside(root, f)) { c.kind = SAME; c.error = "Path is outside the project"; out.add(c); continue; } }
+                catch (Exception e) { c.kind = SAME; c.error = "Bad path"; out.add(c); continue; }
+                File src = findAttachment(attachDir, op.attachment);
+                String bad = resNameProblem(c.path);
+                if (src == null) { c.kind = SAME; c.error = "Attachment \"" + op.attachment + "\" not found in this chat"; }
+                else if (!assetExtOk(c.path)) { c.kind = SAME; c.error = "This file type cannot be imported"; }
+                else if (bad != null) { c.kind = SAME; c.error = bad; }
+                else if (src.length() > 25L * 1024 * 1024) { c.kind = SAME; c.error = "File is larger than 25 MB"; }
+                else {
+                    c.srcFile = src;
+                    c.kind = f.isFile() ? MODIFY : NEW;
+                    c.added = 0; c.removed = 0;
+                    c.newText = "";
+                }
+                out.add(c);
+                continue;
+            }
             boolean exists = (f.isFile() || virtual.containsKey(c.path)) && !deleted.contains(c.path);
             String cur = virtual.containsKey(c.path) ? virtual.get(c.path) : "";
             if (!virtual.containsKey(c.path) && f.isFile() && !deleted.contains(c.path)) {
@@ -194,6 +252,11 @@ public final class FileOps {
         FileUtil.writeText(new File(bdir, "manifest.json"), Jx.write(manifest));
         for (Change c : todo) {
             File f = new File(root, c.path);
+            if (c.srcFile != null) {
+                f.getParentFile().mkdirs();
+                FileUtil.copyFile(c.srcFile, f);
+                continue;
+            }
             switch (c.kind) {
                 case DELETE: f.delete(); pruneEmpty(root, f.getParentFile()); break;
                 case RENAME: {

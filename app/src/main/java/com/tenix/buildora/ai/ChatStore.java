@@ -47,7 +47,13 @@ public final class ChatStore {
         } catch (Exception e) { return null; }
     }
 
-    public synchronized void delete(String id) { fileOf(id).delete(); }
+    /** Folder with the pictures and files attached in a chat (next to the chats folder). */
+    public File attachDirOf(String id) { return new File(new File(dir.getParentFile(), "attach"), id); }
+
+    public synchronized void delete(String id) {
+        fileOf(id).delete();
+        FileUtil.deleteRecursive(attachDirOf(id));
+    }
 
     public synchronized List<Chat> loadAll() {
         List<Chat> out = new ArrayList<>();
@@ -94,6 +100,12 @@ public final class ChatStore {
         c.title = c.title + " (copy)";
         c.pinned = false;
         for (Chat.Message m : c.messages) m.backupId = "";
+        File from = attachDirOf(id), to = attachDirOf(c.id);
+        File[] fs = from.listFiles();
+        if (fs != null) {
+            to.mkdirs();
+            for (File f : fs) { try { if (f.isFile()) FileUtil.copyFile(f, new File(to, f.getName())); } catch (Exception ignored) { } }
+        }
         save(c);
         return c;
     }

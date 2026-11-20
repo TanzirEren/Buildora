@@ -19,6 +19,7 @@ import android.widget.TextView;
 
 import com.tenix.buildora.R;
 import com.tenix.buildora.core.FileUtil;
+import com.tenix.buildora.core.MenuSheet;
 import com.tenix.buildora.core.Prefs;
 import com.tenix.buildora.core.Project;
 import com.tenix.buildora.core.ProjectStore;
@@ -178,42 +179,36 @@ public class ChatDrawer extends LinearLayout {
         String name = rf.getName() + (rf.isDirectory() ? "" : " (missing)");
         final String key = "p" + root.hashCode();
         header(name, chats.size(), R.drawable.ic_android, key, searching, v -> {
-            PopupMenu pm = new PopupMenu(act, v);
-            pm.getMenu().add(0, 1, 0, "New chat in this project");
-            if (rf.isDirectory()) pm.getMenu().add(0, 2, 1, "Open project in IDE");
-            pm.getMenu().add(0, 3, 2, "Delete all chats here");
-            pm.setOnMenuItemClickListener(mi -> {
-                if (mi.getItemId() == 1) { l.onNewChat(root, ""); l.onClose(); }
-                else if (mi.getItemId() == 2) l.onOpenProject(rf);
+            MenuSheet ms = new MenuSheet(act).add(1, R.drawable.mi_edit, "New chat in this project");
+            if (rf.isDirectory()) ms.add(2, R.drawable.mi_code, "Open project in IDE");
+            ms.divider().danger(3, R.drawable.mi_trash, "Delete all chats here");
+            ms.show(v, id -> {
+                if (id == 1) { l.onNewChat(root, ""); l.onClose(); }
+                else if (id == 2) l.onOpenProject(rf);
                 else confirmDeleteMany(chats, "all chats of " + rf.getName());
-                return true;
             });
-            pm.show();
         });
         if (!collapsed(key, searching)) for (Chat c : chats) list.addView(chatRow(c));
     }
 
     private void customFolder(final String name, final List<Chat> chats, boolean searching) {
         final String key = "f" + name.hashCode();
-        header(name, chats.size(), R.drawable.ic_folder, key, searching, v -> {
-            PopupMenu pm = new PopupMenu(act, v);
-            pm.getMenu().add(0, 1, 0, "New chat in this folder");
-            pm.getMenu().add(0, 2, 1, "Rename folder");
-            pm.getMenu().add(0, 3, 2, "Delete folder (keep chats)");
-            pm.getMenu().add(0, 4, 3, "Delete folder and chats");
-            pm.setOnMenuItemClickListener(mi -> {
-                switch (mi.getItemId()) {
-                    case 1: l.onNewChat("", name); l.onClose(); break;
-                    case 2: promptText("Rename folder", name, s -> { store.renameFolder(name, s); refresh(); }); break;
-                    case 3: store.deleteFolder(name, false); refresh(); break;
-                    case 4: UI.dialog(act).setTitle("Delete folder and its chats?").setMessage(chats.size() + " chat(s) will be deleted.")
-                            .setPositiveButton("Delete", (d, w) -> { for (Chat c : chats) l.onChatDeleted(c.id); store.deleteFolder(name, true); refresh(); })
-                            .setNegativeButton("Cancel", null).show(); break;
-                }
-                return true;
-            });
-            pm.show();
-        });
+        header(name, chats.size(), R.drawable.ic_folder, key, searching, v -> new MenuSheet(act)
+                .add(1, R.drawable.mi_edit, "New chat in this folder")
+                .add(2, R.drawable.mi_rename, "Rename folder")
+                .divider()
+                .add(3, R.drawable.mi_folder, "Delete folder", "Keep the chats")
+                .danger(4, R.drawable.mi_trash, "Delete folder and chats")
+                .show(v, id -> {
+                    switch (id) {
+                        case 1: l.onNewChat("", name); l.onClose(); break;
+                        case 2: promptText("Rename folder", name, s -> { store.renameFolder(name, s); refresh(); }); break;
+                        case 3: store.deleteFolder(name, false); refresh(); break;
+                        case 4: UI.dialog(act).setTitle("Delete folder and its chats?").setMessage(chats.size() + " chat(s) will be deleted.")
+                                .setPositiveButton("Delete", (d, w) -> { for (Chat c : chats) l.onChatDeleted(c.id); store.deleteFolder(name, true); refresh(); })
+                                .setNegativeButton("Cancel", null).show(); break;
+                    }
+                }));
         if (!collapsed(key, searching)) for (Chat c : chats) list.addView(chatRow(c));
     }
 
@@ -266,18 +261,18 @@ public class ChatDrawer extends LinearLayout {
     // ------------------------------------------------------------------ chat menu
 
     private void chatMenu(final Chat c, View anchor) {
-        PopupMenu pm = new PopupMenu(act, anchor);
-        pm.getMenu().add(0, 1, 0, "Rename");
-        pm.getMenu().add(0, 2, 1, c.pinned ? "Unpin" : "Pin to top");
-        pm.getMenu().add(0, 3, 2, "Move to project / folder…");
-        pm.getMenu().add(0, 4, 3, "Duplicate");
-        pm.getMenu().add(0, 5, 4, "Export…");
         File pr = c.projectRoot.isEmpty() ? null : new File(c.projectRoot);
-        if (pr != null && pr.isDirectory()) pm.getMenu().add(0, 6, 5, "Open project in IDE");
-        pm.getMenu().add(0, 7, 6, "Clear messages");
-        pm.getMenu().add(0, 8, 7, "Delete");
-        pm.setOnMenuItemClickListener(mi -> {
-            switch (mi.getItemId()) {
+        MenuSheet ms = new MenuSheet(act)
+                .add(1, R.drawable.mi_rename, "Rename")
+                .add(2, R.drawable.mi_pin, c.pinned ? "Unpin" : "Pin to top")
+                .add(3, R.drawable.mi_move, "Move to project / folder")
+                .divider()
+                .add(4, R.drawable.mi_duplicate, "Duplicate")
+                .add(5, R.drawable.mi_export, "Export");
+        if (pr != null && pr.isDirectory()) ms.add(6, R.drawable.mi_code, "Open project in IDE");
+        ms.divider().add(7, R.drawable.mi_eraser, "Clear messages").danger(8, R.drawable.mi_trash, "Delete");
+        ms.show(anchor, id -> {
+            switch (id) {
                 case 1: promptText("Rename chat", c.title, s -> { c.title = s; c.autoTitled = true; store.save(c); l.onChatRenamed(c); refresh(); }); break;
                 case 2: c.pinned = !c.pinned; store.save(c); refresh(); break;
                 case 3: moveDialog(c); break;
@@ -285,12 +280,10 @@ public class ChatDrawer extends LinearLayout {
                 case 5: exportDialog(c); break;
                 case 6: l.onOpenProject(new File(c.projectRoot)); break;
                 case 7: UI.dialog(act).setTitle("Clear messages?").setMessage("The chat stays, all messages are removed.")
-                        .setPositiveButton("Clear", (d, w) -> { c.messages.clear(); store.save(c); l.onChatRenamed(c); refresh(); }).setNegativeButton("Cancel", null).show(); break;
+                        .setPositiveButton("Clear", (d, w) -> { c.messages.clear(); c.tokensIn = 0; c.tokensOut = 0; store.save(c); l.onChatRenamed(c); refresh(); }).setNegativeButton("Cancel", null).show(); break;
                 case 8: confirmDeleteMany(java.util.Collections.singletonList(c), "this chat"); break;
             }
-            return true;
         });
-        pm.show();
     }
 
     private void confirmDeleteMany(final List<Chat> chats, String what) {

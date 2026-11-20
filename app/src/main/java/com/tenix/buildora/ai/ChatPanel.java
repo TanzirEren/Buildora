@@ -15,7 +15,13 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.text.TextWatcher;
+import android.graphics.Outline;
+import android.net.Uri;
 import android.util.Base64;
+import android.view.ViewOutlineProvider;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import com.tenix.buildora.core.MenuSheet;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -68,12 +74,26 @@ public class ChatPanel extends LinearLayout {
         public void chatChanged(Chat c) { }
         public void openIde(File root) { }
         public void projectCreated(File root, Chat c) { }
+        /** Token counts of the chat changed (also while a reply is being written). */
+        public void usageChanged() { }
+        /** A reply started or ended (lets the host animate its AI button). */
+        public void busyChanged(boolean busy) { }
     }
+
+    private static final int MAX_ATT = 10, MAX_IMAGES = 12;
 
     private static final class Att {
         String name, rel, text;
-        ChatClient.Img img;
+        final List<ChatClient.Img> imgs = new ArrayList<>();
+        Bitmap thumb;
+        String kind = FileDigest.TEXT, note = "";
+        long size;
+        boolean loading;
+        File stored;
+        int tokens() { return (text == null ? 0 : ChatClient.estimateTokens(text)) + imgs.size() * 800; }
     }
+
+    private static final android.util.LruCache<String, Bitmap> THUMBS = new android.util.LruCache<>(30);
 
     private final Activity act;
     private final Host host;
@@ -85,7 +105,6 @@ public class ChatPanel extends LinearLayout {
     private String providerId = "", modelId = "";
     private final List<Att> atts = new ArrayList<>();
     private String quote = "";
-    private ChatClient client;
     private boolean busy, stopped, fixMode;
     private int fixRound, readRounds;
     private final List<String> forcePriority = new ArrayList<>();
@@ -104,9 +123,17 @@ public class ChatPanel extends LinearLayout {
     private final TextView modelChip, tokens;
     private final ImageButton btnSend, btnPlus;
     private LinearLayout liveBody;
-    private TextView liveHint;
-    private final StringBuilder stream = new StringBuilder();
-    private boolean tickPending, autoScroll = true;
+    private ThinkingView think;
+    private AiJobs.Job job;
+    private boolean tickPending, autoScroll = true, animateNext;
+    private long firstDeltaAt;
+    private android.animation.ObjectAnimator sendPulse;
+
+    private final AiJobs.Listener jobListener = new AiJobs.Listener() {
+        @Override public void onDelta(AiJobs.Job j) { if (j == job) { if (firstDeltaAt == 0) firstDeltaAt = System.currentTimeMillis(); scheduleTick(); } }
+        @Override public void onKeySwitch(String message) { UI.toastLong(act, message); }
+        @Override public void onFinish(AiJobs.Job j) { if (j == job) finish(j); }
+    };
 
     private final MdRender.Listener mdListener = new MdRender.Listener() {
         @Override public void onQuote(String text) { setQuote(text); }
@@ -157,10 +184,9 @@ public class ChatPanel extends LinearLayout {
         attachScroll = new HorizontalScrollView(a);
         attachScroll.setHorizontalScrollBarEnabled(false);
         attachRow = UI.hbox(a);
-        attachRow.setPadding(UI.dp(a, 14), UI.dp(a, 4), UI.dp(a, 14), UI.dp(a, 2));
+        attachRow.setPadding(0, UI.dp(a, 4), UI.dp(a, 6), UI.dp(a, 6));
         attachScroll.addView(attachRow);
         attachScroll.setVisibility(GONE);
-        addView(attachScroll);
 
         // ---- quick prompts
         quickScroll = new HorizontalScrollView(a);
@@ -175,6 +201,7 @@ public class ChatPanel extends LinearLayout {
         box.setBackgroundResource(R.drawable.bg_chatbox);
         box.setElevation(UI.dp(a, 3));
         box.setPadding(UI.dp(a, 14), UI.dp(a, 6), UI.dp(a, 8), UI.dp(a, 8));
+        box.addView(attachScroll, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         input = new EditText(a);
         input.setHint("Ask Buildora AI…");
         input.setHintTextColor(UI.color(a, R.attr.bTextDim));
@@ -294,6 +321,7 @@ public class ChatPanel extends LinearLayout {
         atts.clear();
         quote = "";
         quoteBar.setVisibility(GONE);
+        detachJob();
         busy = false; stopped = false; fixMode = false; readRounds = 0;
         forcePriority.clear();
         String[] d = ps.resolveDefault();
@@ -305,8 +333,18 @@ public class ChatPanel extends LinearLayout {
         refreshAttachRow();
         updateModelChip();
         renderAll();
+        AiJobs.Job running = AiJobs.get(chat.id);
+        if (running != null && !running.done) { busy = true; fixMode = running.fixMode; job = running; showLive(); running.attach(jobListener); scheduleTick(); }
         updateSendIcon();
         host.chatChanged(chat);
+    }
+
+    private void detachJob() {
+        if (job != null) job.detach(jobListener);
+        job = null;
+        think = null;
+        liveBody = null;
+        firstDeltaAt = 0;
     }
 
     public void saveDraft() {
@@ -315,7 +353,15 @@ public class ChatPanel extends LinearLayout {
         Prefs.put(act, "ai_draft_" + chat.id, t);
     }
 
-    public void onPause() { saveDraft(); }
+    public void onPause() { saveDraft(); setVisible(false); }
+
+    public void onResume() { setVisible(true); }
+
+    /** Tells the background engine whether the user can currently see this chat (decides about notifications). */
+    public void setVisible(boolean v) { if (job != null) job.setVisible(v); }
+
+    /** Call from onDestroy: a running request keeps going in the background. */
+    public void detach() { saveDraft(); detachJob(); if (sendPulse != null) sendPulse.cancel(); }
 
     public File root() {
         File r = host.projectRoot();
@@ -331,6 +377,7 @@ public class ChatPanel extends LinearLayout {
         if (chat.messages.isEmpty()) return;
         store.save(chat);
         host.chatChanged(chat);
+        host.usageChanged();
     }
 
     // ------------------------------------------------------------------ rendering
@@ -343,9 +390,14 @@ public class ChatPanel extends LinearLayout {
 
     private void renderAll() {
         msgBox.removeAllViews();
-        liveBody = null; liveHint = null;
+        liveBody = null; think = null;
         if (chat.messages.isEmpty()) msgBox.addView(emptyState());
-        else for (int i = 0; i < chat.messages.size(); i++) msgBox.addView(messageView(i));
+        else for (int i = 0; i < chat.messages.size(); i++) {
+            View mv = messageView(i);
+            msgBox.addView(mv);
+            if (animateNext && i >= chat.messages.size() - 2) animateIn(mv);
+        }
+        animateNext = false;
         refreshQuick();
         scrollDown(true);
     }
@@ -374,6 +426,13 @@ public class ChatPanel extends LinearLayout {
         add.setOnClickListener(x -> act.startActivity(new Intent(act, AiProvidersActivity.class)));
         v.addView(add);
         return v;
+    }
+
+    /** New messages slide up and fade in. */
+    private void animateIn(View v) {
+        v.setAlpha(0f);
+        v.setTranslationY(UI.dp(act, 14));
+        v.animate().alpha(1f).translationY(0f).setDuration(240).setStartDelay(20).start();
     }
 
     private void refreshQuick() {
@@ -431,6 +490,8 @@ public class ChatPanel extends LinearLayout {
             q.setPadding(0, 0, 0, UI.dp(act, 4));
             bub.addView(q);
         }
+        View attView = attachmentsView(m);
+        if (attView != null && !m.hidden) bub.addView(attView);
         if (m.hidden) {
             final TextView t = UI.label(act, "🛠 " + UI.ellipsize(m.text.split("\n")[0], 90), 12.5f, false);
             bub.addView(t);
@@ -439,21 +500,13 @@ public class ChatPanel extends LinearLayout {
             TextView t = UI.label(act, m.text, 14, false);
             bub.addView(t);
         }
-        if (!m.attachments.isEmpty()) {
-            TextView a = UI.label(act, "📎 " + TextUtils.join(", ", m.attachments), 11.5f, true);
-            a.setPadding(0, UI.dp(act, 4), 0, 0);
-            bub.addView(a);
-        }
         LayoutParams bl = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         bub.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         bub.setOnLongClickListener(v -> {
-            PopupMenu pm = new PopupMenu(act, v);
-            pm.getMenu().add(0, 1, 0, "Copy");
-            pm.getMenu().add(0, 2, 1, "Reply to this");
-            if (!busy) pm.getMenu().add(0, 3, 2, "Edit & resend");
-            if (!busy) pm.getMenu().add(0, 4, 3, "Delete from here");
-            pm.setOnMenuItemClickListener(mi -> {
-                switch (mi.getItemId()) {
+            MenuSheet ms = new MenuSheet(act).add(1, R.drawable.mi_copy, "Copy").add(2, R.drawable.mi_reply, "Reply to this");
+            if (!busy) ms.add(3, R.drawable.mi_edit, "Edit & resend").divider().danger(4, R.drawable.mi_trash, "Delete from here");
+            ms.show(v, id -> {
+                switch (id) {
                     case 1: UI.copy(act, "message", m.text); UI.toast(act, "Copied"); break;
                     case 2: setQuote(m.text); break;
                     case 3:
@@ -466,9 +519,7 @@ public class ChatPanel extends LinearLayout {
                         persist(); renderAll();
                         break;
                 }
-                return true;
             });
-            pm.show();
             return true;
         });
         wrap.addView(bub);
@@ -512,12 +563,91 @@ public class ChatPanel extends LinearLayout {
             acts.addView(dl);
         }
         if (!m.model.isEmpty() && !m.model.equals("__note")) {
-            TextView mt = UI.label(act, UI.ellipsize(m.model, 28), 10.5f, true);
+            TextView mt = UI.label(act, UI.ellipsize(m.model, 28) + (m.tokIn + m.tokOut > 0 ? "  ·  " + Ai.compact(m.tokIn + m.tokOut) + " tok" : ""), 10.5f, true);
             mt.setPadding(UI.dp(act, 8), 0, 0, 0);
             acts.addView(mt);
         }
         wrap.addView(acts);
         return wrap;
+    }
+
+    private View attachmentsView(Chat.Message m) {
+        if (m.attachments.isEmpty()) return null;
+        File dir = Ai.attachDir(act, chat.id);
+        HorizontalScrollView hs = new HorizontalScrollView(act);
+        hs.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = UI.hbox(act);
+        row.setPadding(0, 0, 0, UI.dp(act, 6));
+        for (String n : m.attachments) {
+            final File f = new File(dir, n);
+            boolean stored = f.isFile();
+            View tile;
+            if (stored && FileDigest.isImageExt(FileDigest.ext(n))) {
+                ImageView iv = new ImageView(act);
+                iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                Bitmap bm = thumbOf(f);
+                if (bm != null) iv.setImageBitmap(bm);
+                roundClip(iv, 14);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(UI.dp(act, 84), UI.dp(act, 84));
+                lp.rightMargin = UI.dp(act, 6);
+                iv.setLayoutParams(lp);
+                tile = iv;
+            } else {
+                tile = fileTile(n, stored ? FileUtil.human(f.length()) : "", 128, 52, null);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(UI.dp(act, 128), UI.dp(act, 52));
+                lp.rightMargin = UI.dp(act, 6);
+                tile.setLayoutParams(lp);
+            }
+            if (stored) tile.setOnClickListener(v -> AttachViewer.show(act, f));
+            row.addView(tile);
+        }
+        hs.addView(row);
+        return hs;
+    }
+
+    private Bitmap thumbOf(File f) {
+        Bitmap b = THUMBS.get(f.getPath());
+        if (b != null) return b;
+        try {
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(f.getPath(), o);
+            int s = 1;
+            while (o.outWidth / s > 400 || o.outHeight / s > 400) s *= 2;
+            BitmapFactory.Options o2 = new BitmapFactory.Options();
+            o2.inSampleSize = s;
+            b = BitmapFactory.decodeFile(f.getPath(), o2);
+            if (b != null) THUMBS.put(f.getPath(), b);
+        } catch (RuntimeException ignored) { }
+        return b;
+    }
+
+    private void roundClip(View v, final int radiusDp) {
+        v.setClipToOutline(true);
+        v.setOutlineProvider(new ViewOutlineProvider() {
+            @Override public void getOutline(View view, Outline o) { o.setRoundRect(0, 0, view.getWidth(), view.getHeight(), UI.dp(act, radiusDp)); }
+        });
+    }
+
+    /** File card: extension badge on top, name and size below. */
+    private LinearLayout fileTile(String name, String sub, int wDp, int hDp, View.OnClickListener remove) {
+        LinearLayout t = UI.vbox(act);
+        t.setBackgroundResource(R.drawable.bg_attach_tile);
+        t.setPadding(UI.dp(act, 10), UI.dp(act, 8), UI.dp(act, 10), UI.dp(act, 8));
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        TextView badge = UI.label(act, FileDigest.badge(name), 9.5f, true);
+        badge.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        badge.setBackgroundResource(R.drawable.bg_tag_ext);
+        badge.setPadding(UI.dp(act, 6), UI.dp(act, 1), UI.dp(act, 6), UI.dp(act, 1));
+        t.addView(badge, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView n = UI.label(act, name, 12f, false);
+        n.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        n.setSingleLine(true);
+        n.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        n.setPadding(0, UI.dp(act, 3), 0, 0);
+        t.addView(n);
+        if (!sub.isEmpty()) t.addView(UI.label(act, sub, 10.5f, true));
+        return t;
     }
 
     // ------------------------------------------------------------------ model + input state
@@ -540,9 +670,9 @@ public class ChatPanel extends LinearLayout {
     }
 
     private void updateMeta() {
-        int chars = input.length();
-        for (Att a : atts) if (a.text != null) chars += a.text.length();
-        tokens.setText(chars > 300 ? "~" + ProjectContext.estimateTokens(input.getText().toString()) + " tok" : "");
+        int toks = ChatClient.estimateTokens(input.getText().toString());
+        for (Att a : atts) toks += a.tokens();
+        tokens.setText(toks > 80 ? "~" + Ai.compact(toks) + " tok" : "");
         if (!busy) refreshQuickVisibility();
     }
 
@@ -552,7 +682,23 @@ public class ChatPanel extends LinearLayout {
     }
 
     private void updateSendIcon() {
+        host.busyChanged(busy);
         btnSend.setImageResource(busy ? R.drawable.ic_stop : R.drawable.ic_arrow_up);
+        if (busy) {
+            if (sendPulse == null) {
+                sendPulse = android.animation.ObjectAnimator.ofPropertyValuesHolder(btnSend,
+                        android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.1f),
+                        android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.1f));
+                sendPulse.setDuration(650);
+                sendPulse.setRepeatCount(android.animation.ObjectAnimator.INFINITE);
+                sendPulse.setRepeatMode(android.animation.ObjectAnimator.REVERSE);
+            }
+            if (!sendPulse.isRunning()) sendPulse.start();
+        } else if (sendPulse != null) {
+            sendPulse.cancel();
+            btnSend.setScaleX(1f);
+            btnSend.setScaleY(1f);
+        }
         refreshQuick();
     }
 
@@ -566,35 +712,88 @@ public class ChatPanel extends LinearLayout {
     private void refreshAttachRow() {
         attachRow.removeAllViews();
         attachScroll.setVisibility(atts.isEmpty() ? GONE : VISIBLE);
-        for (final Att a : atts) {
-            TextView c = chip((a.img != null ? "🖼 " : "📎 ") + UI.ellipsize(a.name, 24) + "  ✕", false);
-            c.setOnClickListener(v -> { atts.remove(a); refreshAttachRow(); updateMeta(); });
-            attachRow.addView(c);
+        for (final Att a : atts) attachRow.addView(attachTile(a));
+        if (!atts.isEmpty()) attachScroll.post(() -> attachScroll.fullScroll(View.FOCUS_RIGHT));
+    }
+
+    private View attachTile(final Att a) {
+        FrameLayout cell = new FrameLayout(act);
+        View body;
+        boolean image = a.thumb != null;
+        if (a.loading) {
+            LinearLayout t = UI.vbox(act);
+            t.setBackgroundResource(R.drawable.bg_attach_tile);
+            t.setGravity(Gravity.CENTER);
+            android.widget.ProgressBar pb = new android.widget.ProgressBar(act);
+            t.addView(pb, new LinearLayout.LayoutParams(UI.dp(act, 22), UI.dp(act, 22)));
+            TextView rd = UI.label(act, "Reading…", 10.5f, true);
+            rd.setPadding(0, UI.dp(act, 4), 0, 0);
+            t.addView(rd);
+            body = t;
+        } else if (image) {
+            ImageView iv = new ImageView(act);
+            iv.setImageBitmap(a.thumb);
+            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            roundClip(iv, 16);
+            body = iv;
+        } else {
+            String sub = a.kind.equals(FileDigest.PDF) ? a.note : a.size > 0 ? FileUtil.human(a.size) : a.rel != null ? "project file" : "text";
+            body = fileTile(a.name, sub, 150, 72, null);
         }
+        if (!a.loading && a.stored != null) body.setOnClickListener(v -> AttachViewer.show(act, a.stored));
+        int w = image && !a.loading ? 72 : 150;
+        FrameLayout.LayoutParams bl = new FrameLayout.LayoutParams(UI.dp(act, w), UI.dp(act, 72));
+        bl.topMargin = UI.dp(act, 6); bl.rightMargin = UI.dp(act, 6);
+        cell.addView(body, bl);
+        if (image && !a.loading && a.kind.equals(FileDigest.PDF)) {
+            TextView pg = UI.label(act, a.note, 9.5f, false);
+            pg.setTextColor(0xFFFFFFFF);
+            pg.setBackgroundColor(0xAA000000);
+            pg.setPadding(UI.dp(act, 5), UI.dp(act, 1), UI.dp(act, 5), UI.dp(act, 1));
+            FrameLayout.LayoutParams pl = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.LEFT);
+            pl.leftMargin = UI.dp(act, 4); pl.bottomMargin = UI.dp(act, 4);
+            cell.addView(pg, pl);
+        }
+        ImageButton x = new ImageButton(act);
+        x.setImageResource(R.drawable.mi_close);
+        x.setColorFilter(0xFFFFFFFF);
+        x.setBackgroundResource(R.drawable.bg_badge_dark);
+        x.setScaleType(ImageButton.ScaleType.CENTER_INSIDE);
+        int pd = UI.dp(act, 4);
+        x.setPadding(pd, pd, pd, pd);
+        x.setOnClickListener(v -> { atts.remove(a); refreshAttachRow(); updateMeta(); });
+        FrameLayout.LayoutParams xl = new FrameLayout.LayoutParams(UI.dp(act, 22), UI.dp(act, 22), Gravity.TOP | Gravity.RIGHT);
+        cell.addView(x, xl);
+        return cell;
     }
 
     // ------------------------------------------------------------------ attachments
 
     private void attachMenu(View anchor) {
-        PopupMenu pm = new PopupMenu(act, anchor);
         final File root = root();
-        int n = 0;
-        if (root != null) pm.getMenu().add(0, 1, n++, "Project file…");
-        pm.getMenu().add(0, 2, n++, "File from device…");
-        pm.getMenu().add(0, 3, n++, "Image…");
-        if (host.currentFile() != null) pm.getMenu().add(0, 4, n++, "Current file");
-        if (!host.selection().isEmpty()) pm.getMenu().add(0, 5, n++, "Selected code");
-        if (root != null) pm.getMenu().add(0, 6, n++, "Last build log");
-        pm.getMenu().add(0, 7, n++, "Paste from clipboard");
-        if (!atts.isEmpty()) pm.getMenu().add(0, 8, n++, "Remove all attachments");
-        pm.setOnMenuItemClickListener(mi -> {
-            switch (mi.getItemId()) {
-                case 1: pickProjectFile(root); break;
-                case 2: pickDeviceFile(false); break;
-                case 3: pickDeviceFile(true); break;
-                case 4: { Att a = new Att(); a.name = host.currentFile(); a.rel = host.currentFile(); addAtt(a); break; }
-                case 5: { Att a = new Att(); a.name = "selection"; a.text = host.selection(); addAtt(a); break; }
-                case 6: {
+        MenuSheet ms = new MenuSheet(act);
+        ms.header("Add to message");
+        ms.add(1, R.drawable.mi_image, "Photos & gallery", "Pick one or many pictures");
+        ms.add(2, R.drawable.mi_camera, "Take a photo");
+        ms.add(3, R.drawable.mi_file, "Files", "Any type: PDF, Word, zip, code…");
+        ms.add(4, R.drawable.mi_folder_open, "Browse phone storage");
+        ms.divider();
+        if (root != null) ms.add(5, R.drawable.mi_folder, "Project file…");
+        if (host.currentFile() != null) ms.add(6, R.drawable.mi_file_text, "Current file");
+        if (!host.selection().isEmpty()) ms.add(7, R.drawable.mi_selection, "Selected code");
+        if (root != null) ms.add(8, R.drawable.mi_terminal, "Last build log");
+        ms.add(9, R.drawable.mi_clipboard, "Paste text or image");
+        if (!atts.isEmpty()) ms.divider().danger(10, R.drawable.mi_x_circle, "Remove all attachments");
+        ms.show(anchor, id -> {
+            switch (id) {
+                case 1: pickGallery(); break;
+                case 2: pickCamera(); break;
+                case 3: pickFiles(); break;
+                case 4: browseStorage(); break;
+                case 5: pickProjectFile(root); break;
+                case 6: { Att a = new Att(); a.name = host.currentFile(); a.rel = host.currentFile(); addAtt(a); break; }
+                case 7: { Att a = new Att(); a.name = "selection"; a.text = host.selection(); addAtt(a); break; }
+                case 8: {
                     try {
                         File lf = Project.load(root).buildLog();
                         if (!lf.isFile()) { UI.toast(act, "No build log yet"); break; }
@@ -603,24 +802,126 @@ public class ChatPanel extends LinearLayout {
                     } catch (Exception e) { UI.toast(act, "Cannot read the build log"); }
                     break;
                 }
-                case 7: {
-                    ClipboardManager cm = (ClipboardManager) act.getSystemService(Context.CLIPBOARD_SERVICE);
-                    CharSequence t = cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip().getItemCount() > 0 ? cm.getPrimaryClip().getItemAt(0).getText() : null;
-                    if (t == null || t.length() == 0) UI.toast(act, "Clipboard is empty");
-                    else { Att a = new Att(); a.name = "clipboard"; a.text = t.toString(); addAtt(a); }
-                    break;
-                }
-                case 8: atts.clear(); refreshAttachRow(); updateMeta(); break;
+                case 9: pasteClipboard(); break;
+                case 10: atts.clear(); refreshAttachRow(); updateMeta(); break;
             }
-            return true;
         });
-        pm.show();
     }
 
     private void addAtt(Att a) {
-        for (Att x : atts) if (x.name.equals(a.name) && x.text == null && a.text == null) return;
-        if (atts.size() >= 8) { UI.toast(act, "Up to 8 attachments"); return; }
+        for (Att x : atts) if (x.name.equals(a.name) && x.text == null && a.text == null && x.stored == null) return;
+        if (atts.size() >= MAX_ATT) { UI.toast(act, "Up to " + MAX_ATT + " attachments per message"); return; }
         atts.add(a);
+        refreshAttachRow();
+        updateMeta();
+    }
+
+    // ----- pickers (system gallery / camera / document picker)
+
+    private void pickGallery() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("image/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        PickerFragment.launch(act, Intent.createChooser(i, "Choose pictures"), (rc, data) -> loadUris(urisOf(rc, data)));
+    }
+
+    private void pickFiles() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("*/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        PickerFragment.launch(act, Intent.createChooser(i, "Choose files"), (rc, data) -> loadUris(urisOf(rc, data)));
+    }
+
+    private File cameraFile;
+
+    private void pickCamera() {
+        try {
+            File dir = new File(act.getFilesDir(), "ai/camera");
+            dir.mkdirs();
+            cameraFile = new File(dir, "photo_" + System.currentTimeMillis() + ".jpg");
+            Uri u = androidx.core.content.FileProvider.getUriForFile(act, act.getPackageName() + ".fileprovider", cameraFile);
+            Intent i = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
+            i.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, u);
+            i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            final File out = cameraFile;
+            PickerFragment.launch(act, i, (rc, data) -> {
+                if (rc == Activity.RESULT_OK && out.isFile() && out.length() > 0) {
+                    List<Uri> l = new ArrayList<>();
+                    l.add(Uri.fromFile(out));
+                    loadUris(l);
+                }
+            });
+        } catch (RuntimeException e) { UI.toast(act, "Camera is not available"); }
+    }
+
+    private List<Uri> urisOf(int rc, Intent data) {
+        List<Uri> out = new ArrayList<>();
+        if (rc != Activity.RESULT_OK || data == null) return out;
+        if (data.getClipData() != null) {
+            for (int k = 0; k < data.getClipData().getItemCount(); k++) { Uri u = data.getClipData().getItemAt(k).getUri(); if (u != null) out.add(u); }
+        } else if (data.getData() != null) out.add(data.getData());
+        return out;
+    }
+
+    private void browseStorage() {
+        File start = Environment.getExternalStorageDirectory();
+        FilePicker.pickAny(act, "Choose file", start, f -> {
+            final File dir = Ai.attachDir(act, chat.id);
+            final int maxPx = Ai.imageMaxPx(act), pages = Ai.pdfPages(act);
+            final Att ph = placeholder(f.getName());
+            if (ph == null) return;
+            new Thread(() -> { final AttachLoader.Item it = AttachLoader.fromDeviceFile(act, f, dir, maxPx, pages); h.post(() -> fill(ph, it)); }, "ai-attach").start();
+        });
+    }
+
+    private void pasteClipboard() {
+        ClipboardManager cm = (ClipboardManager) act.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm == null || !cm.hasPrimaryClip() || cm.getPrimaryClip().getItemCount() == 0) { UI.toast(act, "Clipboard is empty"); return; }
+        android.content.ClipData.Item item = cm.getPrimaryClip().getItemAt(0);
+        Uri u = item.getUri();
+        if (u != null) {
+            String mime = act.getContentResolver().getType(u);
+            if (mime != null && mime.startsWith("image/")) { List<Uri> l = new ArrayList<>(); l.add(u); loadUris(l); return; }
+        }
+        CharSequence t = item.getText();
+        if (t == null || t.length() == 0) { UI.toast(act, "Nothing to paste"); return; }
+        Att a = new Att(); a.name = "clipboard.txt"; a.text = t.toString(); addAtt(a);
+    }
+
+    private Att placeholder(String name) {
+        if (atts.size() >= MAX_ATT) { UI.toast(act, "Up to " + MAX_ATT + " attachments per message"); return null; }
+        Att ph = new Att();
+        ph.name = name;
+        ph.loading = true;
+        atts.add(ph);
+        refreshAttachRow();
+        updateMeta();
+        return ph;
+    }
+
+    /** Public so a hosting screen can hand over files shared to Buildora AI from another app. */
+    public void attachUris(List<Uri> uris) { loadUris(uris); }
+
+    private void loadUris(List<Uri> uris) {
+        if (uris == null || uris.isEmpty() || chat == null) return;
+        final File dir = Ai.attachDir(act, chat.id);
+        final int maxPx = Ai.imageMaxPx(act), pages = Ai.pdfPages(act);
+        for (final Uri u : uris) {
+            final Att ph = placeholder(AttachLoader.displayName(act, u));
+            if (ph == null) break;
+            new Thread(() -> { final AttachLoader.Item it = AttachLoader.fromUri(act, u, dir, maxPx, pages); h.post(() -> fill(ph, it)); }, "ai-attach").start();
+        }
+    }
+
+    private void fill(Att ph, AttachLoader.Item it) {
+        if (!atts.contains(ph)) return;
+        if (it.error != null) { atts.remove(ph); UI.toast(act, "Could not attach " + ph.name + ": " + it.error); }
+        else {
+            ph.name = it.name; ph.text = it.text; ph.imgs.addAll(it.imgs); ph.thumb = it.thumb;
+            ph.kind = it.kind; ph.note = it.note; ph.size = it.size; ph.stored = it.stored; ph.loading = false;
+        }
         refreshAttachRow();
         updateMeta();
     }
@@ -658,42 +959,11 @@ public class ChatPanel extends LinearLayout {
         d.show();
     }
 
-    private void pickDeviceFile(final boolean image) {
-        File start = Environment.getExternalStorageDirectory();
-        FilePicker.Callback cb = f -> {
-            try {
-                Att a = new Att();
-                a.name = f.getName();
-                if (image || FileUtil.isImage(f)) {
-                    BitmapFactory.Options o = new BitmapFactory.Options();
-                    o.inJustDecodeBounds = true;
-                    BitmapFactory.decodeFile(f.getPath(), o);
-                    int sample = 1;
-                    while (o.outWidth / sample > 1600 || o.outHeight / sample > 1600) sample *= 2;
-                    BitmapFactory.Options o2 = new BitmapFactory.Options();
-                    o2.inSampleSize = sample;
-                    Bitmap bm = BitmapFactory.decodeFile(f.getPath(), o2);
-                    if (bm == null) { UI.toast(act, "Cannot read this image"); return; }
-                    ByteArrayOutputStream bo = new ByteArrayOutputStream();
-                    bm.compress(Bitmap.CompressFormat.JPEG, 82, bo);
-                    bm.recycle();
-                    a.img = new ChatClient.Img("image/jpeg", Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP));
-                } else {
-                    if (FileUtil.looksBinary(f)) { UI.toast(act, "Binary files cannot be attached"); return; }
-                    if (f.length() > 200 * 1024) { UI.toast(act, "File is larger than 200 KB"); return; }
-                    a.text = FileUtil.readText(f);
-                }
-                addAtt(a);
-            } catch (Exception e) { UI.toast(act, "Could not attach: " + e.getMessage()); }
-        };
-        if (image) FilePicker.pickFile(act, "Choose image", start, new String[]{"png", "jpg", "jpeg", "webp"}, cb);
-        else FilePicker.pickAny(act, "Choose file", start, cb);
-    }
-
     // ------------------------------------------------------------------ sending
 
     private void onSendClicked() {
-        if (busy) { stopped = true; if (client != null) client.cancel(); return; }
+        if (busy) { stopped = true; if (job != null) job.stop(); if (think != null) think.setStopping(); return; }
+        for (Att a : atts) if (a.loading) { UI.toast(act, "Still reading attachments…"); return; }
         String t = input.getText().toString().trim();
         if (t.isEmpty() && atts.isEmpty()) return;
         if (t.isEmpty()) t = "Please look at the attached file(s).";
@@ -721,7 +991,7 @@ public class ChatPanel extends LinearLayout {
         um.quote = quote;
         um.hidden = hidden;
         final List<Att> sendAtts = new ArrayList<>(atts);
-        for (Att a : sendAtts) um.attachments.add(a.name);
+        for (Att a : sendAtts) um.attachments.add(a.stored != null || a.rel == null ? a.name : a.rel);
         chat.messages.add(um);
         chat.provider = providerId; chat.model = modelId;
         atts.clear();
@@ -730,6 +1000,7 @@ public class ChatPanel extends LinearLayout {
         input.setText("");
         refreshAttachRow();
         persist();
+        animateNext = true;
         renderAll();
         generate(um, sendAtts);
     }
@@ -791,16 +1062,37 @@ public class ChatPanel extends LinearLayout {
             if (!sel.isEmpty()) sb.append("Selected code:\n```\n").append(Prompts.cut(sel, 6000)).append("\n```\n");
         }
         ChatClient.Msg um = null;
+        int images = 0;
         for (Att a : sendAtts) {
-            if (a.text != null) sb.append("<attachment name=\"").append(a.name).append("\">\n").append(Prompts.cut(a.text, 60000)).append("\n</attachment>\n");
+            if (a.text != null) sb.append("<attachment name=\"").append(a.name).append("\" kind=\"").append(a.kind).append("\">\n").append(Prompts.cut(a.text, 60000)).append("\n</attachment>\n");
         }
+        String earlier = earlierAttachments(sendAtts);
+        if (!earlier.isEmpty()) sb.append(earlier).append('\n');
         if (!lastUser.quote.isEmpty()) sb.append("The user is replying to this part of the conversation:\n> ").append(lastUser.quote.replace("\n", "\n> ")).append("\n\n");
         if (sb.length() > 0) sb.append("User request:\n");
         sb.append(lastUser.text);
         um = new ChatClient.Msg("user", sb.toString());
-        for (Att a : sendAtts) if (a.img != null) um.images.add(a.img);
+        for (Att a : sendAtts) for (ChatClient.Img im : a.imgs) { if (images++ < MAX_IMAGES) um.images.add(im); }
         out.add(um);
         return out;
+    }
+
+    /** Names of files attached earlier in this chat, so the AI can import or re-read them. */
+    private String earlierAttachments(List<Att> current) {
+        File dir = Ai.attachDir(act, chat.id);
+        File[] fs = dir.listFiles();
+        if (fs == null || fs.length == 0) return "";
+        java.util.Arrays.sort(fs);
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (File f : fs) {
+            boolean now = false;
+            for (Att a : current) if (a.stored != null && a.stored.equals(f)) now = true;
+            if (now || !f.isFile()) continue;
+            if (n++ >= 25) break;
+            sb.append("- ").append(f.getName()).append(" (").append(FileUtil.human(f.length())).append(")\n");
+        }
+        return n == 0 ? "" : "Files attached earlier in this chat (import with `import <name> -> <path>` or view again with `attach:<name>` in a buildora-read block):\n" + sb;
     }
 
     private void generate(final Chat.Message userMsg, final List<Att> sendAtts) {
@@ -808,34 +1100,45 @@ public class ChatPanel extends LinearLayout {
         if (p == null) return;
         final String model = modelId;
         busy = true; stopped = false;
-        stream.setLength(0);
+        firstDeltaAt = 0;
         updateSendIcon();
-        // live placeholder
+        showLive();
+        final List<ChatClient.Msg> req = buildRequest(userMsg, sendAtts);
+        File r = root();
+        boolean auto = (fixMode || Prefs.bool(act, Prefs.AI_AUTOAPPLY, false)) && r != null;
+        job = AiJobs.start(act, chat.id, chat.title, r == null ? "" : r.getPath(), p, model, req, Ai.options(act, p), auto, fixMode, jobListener);
+        job.attach(jobListener);
+    }
+
+    /** Adds the live answer area: streamed text with the animated thinking / writing indicator below it. */
+    private void showLive() {
         LinearLayout wrap = UI.vbox(act);
         LinearLayout.LayoutParams wl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         wl.topMargin = UI.dp(act, 12);
         wrap.setLayoutParams(wl);
         liveBody = UI.vbox(act);
         wrap.addView(liveBody);
-        liveHint = UI.label(act, "Thinking…", 12, true);
-        liveHint.setPadding(0, UI.dp(act, 6), 0, 0);
-        wrap.addView(liveHint);
+        think = new ThinkingView(act);
+        wrap.addView(think);
         msgBox.addView(wrap);
+        animateIn(wrap);
         autoScroll = true;
         scrollDown(true);
+    }
 
-        final List<ChatClient.Msg> req = buildRequest(userMsg, sendAtts);
-        final ChatClient cl = new ChatClient();
-        client = cl;
-        final ChatClient.Options opt = Ai.options(act);
-        new Thread(() -> cl.run(p, model, req, opt, new ChatClient.Callback() {
-            @Override public void onDelta(String t) {
-                synchronized (stream) { stream.append(t); }
-                h.post(() -> scheduleTick());
-            }
-            @Override public void onDone(String full) { h.post(() -> finish(full, null, model)); }
-            @Override public void onError(String message, String partial) { h.post(() -> finish(partial, message, model)); }
-        }), "ai-chat").start();
+    /** File being written right now (last open file block of the streamed text), or "". */
+    static String liveFileName(String s) {
+        String name = "";
+        boolean inFence = false;
+        for (String ln : s.split("\n", -1)) {
+            String t = ln.trim();
+            if (!t.startsWith("```")) continue;
+            if (inFence) { inFence = false; name = ""; continue; }
+            inFence = true;
+            java.util.regex.Matcher m = Pattern.compile("(?:path|file)=([^\\s`]+)").matcher(t);
+            if (m.find()) { String pth = m.group(1); name = pth.substring(pth.lastIndexOf('/') + 1); }
+        }
+        return inFence ? name : "";
     }
 
     private void scheduleTick() {
@@ -843,21 +1146,32 @@ public class ChatPanel extends LinearLayout {
         tickPending = true;
         h.postDelayed(() -> {
             tickPending = false;
-            if (!busy || liveBody == null) return;
-            String s;
-            synchronized (stream) { s = stream.toString(); }
+            if (!busy || liveBody == null || job == null) return;
+            String s = job.snapshot();
             MdRender.render(act, liveBody, s, sp(), false, null, false);
-            if (liveHint != null) liveHint.setText(stopped ? "Stopping…" : "Writing… " + s.length() + " chars");
+            if (think != null && !stopped && !s.isEmpty()) {
+                int tok = ChatClient.estimateTokens(s);
+                long ms = firstDeltaAt == 0 ? 0 : System.currentTimeMillis() - firstDeltaAt;
+                think.setWriting(liveFileName(s), tok, ms > 1500 ? tok * 1000f / ms : 0f);
+            }
             scrollDown(false);
+            host.usageChanged();
         }, 110);
     }
 
-    private void finish(String full, String err, String model) {
+    private void finish(AiJobs.Job j) {
         if (!busy) return;
         busy = false;
-        client = null;
+        stopped = j.stopped;
+        job = null;
+        think = null;
+        String full = j.full, err = j.error;
         Chat.Message am = new Chat.Message("assistant", full == null ? "" : full);
-        am.model = model;
+        am.model = j.model;
+        am.tokIn = j.usageIn;
+        am.tokOut = j.usageOut;
+        chat.tokensIn += j.usageIn;
+        chat.tokensOut += j.usageOut;
         if (err != null) {
             am.error = full == null || full.isEmpty();
             am.text = am.error ? "⚠ " + err : am.text + "\n\n⚠ " + err;
@@ -867,6 +1181,7 @@ public class ChatPanel extends LinearLayout {
         if (!chat.autoTitled && Prefs.bool(act, Prefs.AI_AUTOTITLE, true)) { chat.title = chat.guessTitle(); chat.autoTitled = true; }
         persist();
         updateSendIcon();
+        animateNext = true;
         renderAll();
         if (err != null || stopped) { if (fixMode) { fixMode = false; host.fixFinished(false); } return; }
         handleReply(am);
@@ -876,17 +1191,38 @@ public class ChatPanel extends LinearLayout {
     private void handleReply(Chat.Message am) {
         Protocol.Parsed pr = Protocol.parse(am.text);
         File root = root();
-        if (root != null && pr.ops.isEmpty() && !pr.reads.isEmpty() && readRounds < 3) {
-            readRounds++;
-            for (String r : pr.reads) { String rr = FileOps.resolve(root, r); if (!forcePriority.contains(rr)) forcePriority.add(rr); }
-            Chat.Message n = new Chat.Message("user", "Here are the files you asked for (they are in the project snapshot below).");
-            n.hidden = true;
-            for (String r : pr.reads) n.attachments.add(r);
-            chat.messages.add(n);
-            persist();
-            renderAll();
-            generate(n, new ArrayList<Att>());
-            return;
+        if (pr.ops.isEmpty() && !pr.reads.isEmpty() && readRounds < 3) {
+            final List<File> again = new ArrayList<>();
+            boolean files = false;
+            for (String r : pr.reads) {
+                if (r.startsWith("attach:")) { File f = FileOps.findAttachment(Ai.attachDir(act, chat.id), r.substring(7)); if (f != null) again.add(f); }
+                else if (root != null) { files = true; String rr = FileOps.resolve(root, r); if (!forcePriority.contains(rr)) forcePriority.add(rr); }
+            }
+            if (files || !again.isEmpty()) {
+                readRounds++;
+                final Chat.Message n = new Chat.Message("user", "Here are the files you asked for.");
+                n.hidden = true;
+                for (String r : pr.reads) n.attachments.add(r.startsWith("attach:") ? r.substring(7) : r);
+                chat.messages.add(n);
+                persist();
+                renderAll();
+                if (again.isEmpty()) { generate(n, new ArrayList<Att>()); return; }
+                busy = true;
+                updateSendIcon();
+                final int maxPx = Ai.imageMaxPx(act), pages = Ai.pdfPages(act);
+                new Thread(() -> {
+                    final List<Att> loaded = new ArrayList<>();
+                    for (File f : again) {
+                        AttachLoader.Item it = AttachLoader.fromFile(act, f, maxPx, pages);
+                        if (it.error != null) continue;
+                        Att a = new Att();
+                        a.name = it.name; a.text = it.text; a.imgs.addAll(it.imgs); a.kind = it.kind; a.stored = it.stored; a.size = it.size;
+                        loaded.add(a);
+                    }
+                    h.post(() -> { busy = false; generate(n, loaded); });
+                }, "ai-attach").start();
+                return;
+            }
         }
         readRounds = 0;
         forcePriority.clear();
@@ -903,6 +1239,28 @@ public class ChatPanel extends LinearLayout {
     // ------------------------------------------------------------------ public helpers for hosts
 
     public boolean isBusy() { return busy; }
+
+    /** Tokens used by this chat so far, including the reply being written right now. */
+    public long totalTokens() {
+        if (chat == null) return 0;
+        long live = 0;
+        if (busy && job != null) live = job.estimatedIn + ChatClient.estimateTokens(job.snapshot());
+        return chat.totalTokens() + live;
+    }
+
+    /** Rough size of the next request: conversation so far plus the project snapshot. */
+    public int nextRequestEstimate() {
+        int chars = 0;
+        for (Chat.Message m : chat.messages) if (!m.model.equals("__note") && !m.error) chars += m.text.length();
+        chars = Math.min(chars, 36000);
+        int t = (int) Math.ceil(chars / 3.6);
+        if (root() != null && Prefs.bool(act, Prefs.AI_SEND_CTX, true)) t += Ai.contextBudget(act) / 4;
+        return t + 450;
+    }
+
+    public void showUsage() { UsageDialog.show(act, chat, providerId, modelId, nextRequestEstimate(), busy ? totalTokens() - chat.totalTokens() : 0); }
+
+    public void setInputText(String t) { input.setText(t); input.setSelection(input.length()); }
 
     public void sendPrompt(String text) { send(text, false); }
 
@@ -977,7 +1335,7 @@ public class ChatPanel extends LinearLayout {
             return card;
         }
         List<FileOps.Change> plan = plans.get(m);
-        if (plan == null) { plan = FileOps.plan(root, pr.ops); plans.put(m, plan); }
+        if (plan == null) { plan = FileOps.plan(root, pr.ops, Ai.attachDir(act, chat.id)); plans.put(m, plan); }
         final List<FileOps.Change> fplan = plan;
         int ok = 0;
         for (FileOps.Change c : plan) if (c.ok()) ok++;
@@ -996,12 +1354,12 @@ public class ChatPanel extends LinearLayout {
             path.setSingleLine(true);
             path.setEllipsize(TextUtils.TruncateAt.MIDDLE);
             col.addView(path);
-            String sub = c.error != null ? "⚠ " + c.error : c.kindLabel() + (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY ? "  +" + c.added + " −" + c.removed : "");
+            String sub = c.error != null ? "⚠ " + c.error : c.kindLabel() + (!c.asset && (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY) ? "  +" + c.added + " −" + c.removed : c.asset ? "  ·  from your attachment" : "");
             TextView st = UI.label(act, sub, 11, true);
             if (c.error != null) st.setTextColor(UI.color(act, R.attr.bError));
             col.addView(st);
             row.addView(col, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            if (c.ok() && (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY || c.kind == FileOps.DELETE)) {
+            if (c.ok() && !c.asset && (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY || c.kind == FileOps.DELETE)) {
                 TextView d = UI.label(act, "View", 12, false);
                 d.setTextColor(UI.color(act, R.attr.bAccent));
                 d.setPadding(UI.dp(act, 8), UI.dp(act, 6), UI.dp(act, 4), UI.dp(act, 6));
@@ -1065,7 +1423,7 @@ public class ChatPanel extends LinearLayout {
         final Protocol.Parsed pr = Protocol.parse(m.text);
         host.saveAll();
         List<FileOps.Change> plan = plans.get(m);
-        if (plan == null || fromFix) plan = FileOps.plan(root, pr.ops);
+        if (plan == null || fromFix) plan = FileOps.plan(root, pr.ops, Ai.attachDir(act, chat.id));
         final List<FileOps.Change> fplan = plan;
         new Thread(() -> {
             String id = "";
@@ -1102,22 +1460,7 @@ public class ChatPanel extends LinearLayout {
     }
 
     /** Adds "group:artifact:version" lines to the project's dependency list. Returns how many were new. */
-    private int addDeps(File root, List<String> deps) {
-        if (deps.isEmpty()) return 0;
-        try {
-            Project p = Project.load(root);
-            int n = 0;
-            for (String d : deps) {
-                String[] parts = d.split(":");
-                String ga = parts[0] + ":" + parts[1];
-                boolean has = false;
-                for (String e : p.dependencies) if (e.equals(d) || e.startsWith(ga + ":") || e.equals(ga)) { has = true; break; }
-                if (!has) { p.dependencies.add(d); n++; }
-            }
-            if (n > 0) p.save();
-            return n;
-        } catch (Exception e) { return 0; }
-    }
+    private int addDeps(File root, List<String> deps) { return AiApply.addDeps(root, deps); }
 
     private void undo(final Chat.Message m) {
         final File root = root();
@@ -1194,7 +1537,7 @@ public class ChatPanel extends LinearLayout {
                     File[] ls = lay.listFiles();
                     if (ls != null) for (File f : ls) if (!mine.contains(FileUtil.relPath(proj.root, f))) f.delete();
                 }
-                List<FileOps.Change> plan = FileOps.plan(proj.root, pr.ops);
+                List<FileOps.Change> plan = FileOps.plan(proj.root, pr.ops, Ai.attachDir(act, chat.id));
                 id = FileOps.apply(proj.root, plan, Ai.backups(proj.root));
                 deps = addDeps(proj.root, pr.deps);
             } catch (Exception e) { err = String.valueOf(e.getMessage()); }

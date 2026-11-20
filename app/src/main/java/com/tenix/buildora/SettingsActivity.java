@@ -77,6 +77,11 @@ public class SettingsActivity extends BaseActivity {
         sliderRow("Creativity (temperature)", Prefs.AI_TEMP, 0, 100, 30, " %");
         choiceRow("Project context sent to AI", Prefs.AI_CTX, new String[]{"Small (12k characters)", "Medium (40k characters)", "Large (120k characters)"}, 1, null);
         maxTokensRow();
+        switchRow("Keep AI working in the background", "AI keeps writing when you leave the app or lock the screen (shows a notification while working)", Prefs.AI_BG, true, null);
+        switchRow("Notify when AI finishes", "Get a notification when a reply is ready while you are away", Prefs.AI_NOTIFY, true, null);
+        switchRow("Token counter in chat header", "Show how many tokens the chat has used, next to the new-chat icon", Prefs.AI_TOKBOX, true, null);
+        choiceRow("Attached picture size", Prefs.AI_IMG_MAX, new String[]{"Small (800 px)", "Medium (1200 px)", "Large (1600 px)", "Very large (2400 px)"}, 2, null);
+        choiceRow("PDF pages sent as pictures", Prefs.AI_PDF_PAGES, new String[]{"2 pages", "4 pages", "8 pages", "12 pages"}, 1, null);
         switchRow("Stream replies", "Show the answer while it is written", Prefs.AI_STREAM, true, null);
         switchRow("Send project files with messages", "Lets the AI read your project (turn off to chat only)", Prefs.AI_SEND_CTX, true, null);
         switchRow("Auto-apply AI file changes", "Write the AI's files without asking (Undo is always available)", Prefs.AI_AUTOAPPLY, false, null);
@@ -371,7 +376,7 @@ public class SettingsActivity extends BaseActivity {
         actionRow("Storage permission", Perm.hasStorage(this) ? "Granted" : "Not granted - tap to allow", () -> Perm.requestStorage(this, 21));
 
         section("About");
-        actionRow("Buildora 2.1.2 Pioneer", "Developer Tanzir", () -> { });
+        actionRow("Buildora 2.1.3 Catalyst", "Developer Tanzir", () -> { });
         contactIcons();
 
         scroll.post(() -> scroll.scrollTo(0, sy));

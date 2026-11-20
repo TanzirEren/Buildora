@@ -244,6 +244,9 @@ public final class MdRender {
         out.addView(row, lp);
     }
 
+    /** Blocks the user has opened (kept across re-renders of the same chat). */
+    private static final java.util.Set<String> OPEN = new java.util.HashSet<>();
+
     private static void addCode(final Context c, LinearLayout out, String info, final String code, float sp, boolean sel,
                                 final Listener l, boolean actions, boolean closed) {
         String lang = info.isEmpty() ? "" : info.split("\\s+")[0];
@@ -254,17 +257,18 @@ public final class MdRender {
         }
         boolean special = lang.startsWith("buildora-");
         final String fpath = path, flang = lang;
+        boolean fileBlock = !path.isEmpty() || special;
+        if (fileBlock) { addFileRow(c, out, path, lang, special, code, sp, sel, l, closed); return; }
         LinearLayout card = UI.vbox(c);
         card.setBackgroundResource(R.drawable.bg_code);
         LinearLayout head = UI.hbox(c);
         head.setPadding(UI.dp(c, 10), UI.dp(c, 4), UI.dp(c, 4), UI.dp(c, 4));
-        TextView title = UI.label(c, !path.isEmpty() ? path : special ? lang.substring(9) : (lang.isEmpty() ? "code" : lang), 11.5f, true);
+        TextView title = UI.label(c, lang.isEmpty() ? "code" : lang, 11.5f, true);
         title.setTypeface(Typeface.MONOSPACE);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        if (!path.isEmpty()) UI.tintIcon(c, title, R.drawable.ic_code, R.attr.bAccent, 14);
         head.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        if (actions && l != null && path.isEmpty() && !special) {
+        if (actions && l != null) {
             TextView ins = chip(c, "Insert");
             ins.setOnClickListener(v -> l.onCode(flang, code, ""));
             head.addView(ins);
@@ -276,6 +280,13 @@ public final class MdRender {
         View div = new View(c);
         div.setBackgroundColor(UI.color(c, R.attr.bDivider));
         card.addView(div, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(c, 1)));
+        card.addView(codeBody(c, code, sp, sel, l));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = UI.dp(c, 6); lp.bottomMargin = UI.dp(c, 6);
+        out.addView(card, lp);
+    }
+
+    private static View codeBody(Context c, String code, float sp, boolean sel, Listener l) {
         TextView body = new TextView(c);
         body.setText(code.isEmpty() ? " " : code);
         body.setTypeface(Typeface.MONOSPACE);
@@ -287,9 +298,87 @@ public final class MdRender {
         HorizontalScrollView hs = new HorizontalScrollView(c);
         hs.setHorizontalScrollBarEnabled(false);
         hs.addView(body);
-        card.addView(hs);
+        return hs;
+    }
+
+    private static int lineCount(String code) {
+        if (code.isEmpty()) return 0;
+        int n = 1;
+        for (int i = 0; i < code.length(); i++) if (code.charAt(i) == '\n') n++;
+        return n;
+    }
+
+    /** A file the AI writes shows only its path; tap to open the code. Nothing is inflated until then. */
+    private static void addFileRow(final Context c, LinearLayout out, String path, String lang, boolean special, final String code,
+                                   final float sp, final boolean sel, final Listener l, boolean closed) {
+        final String key = (path.isEmpty() ? lang : path) + "|" + code.length() + "|" + code.hashCode();
+        String title = !path.isEmpty() ? path : lang.substring(9);
+        if (special) {
+            switch (lang.substring(9)) {
+                case "ops": title = "file operations"; break;
+                case "deps": title = "libraries"; break;
+                case "read": title = "files the AI wants to read"; break;
+                case "project": title = "new project"; break;
+                default: break;
+            }
+        }
+        final LinearLayout card = UI.vbox(c);
+        card.setBackgroundResource(R.drawable.bg_code);
+        LinearLayout head = UI.hbox(c);
+        head.setPadding(UI.dp(c, 12), UI.dp(c, 4), UI.dp(c, 6), UI.dp(c, 4));
+        head.setMinimumHeight(UI.dp(c, 44));
+        head.setBackgroundResource(R.drawable.bg_ripple_rect);
+        android.widget.ImageView ic = new android.widget.ImageView(c);
+        ic.setImageResource(special ? R.drawable.mi_list : lang.equals("patch") ? R.drawable.mi_edit : R.drawable.mi_file_text);
+        ic.setColorFilter(UI.color(c, R.attr.bAccent));
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(UI.dp(c, 18), UI.dp(c, 18));
+        ilp.rightMargin = UI.dp(c, 10);
+        head.addView(ic, ilp);
+        TextView t = UI.label(c, title, 12.5f, false);
+        t.setTypeface(Typeface.MONOSPACE);
+        t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        head.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        int lines = lineCount(code);
+        String meta = !closed ? "writing…" : special ? lines + (lines == 1 ? " line" : " lines") : (lang.equals("patch") ? "edit · " : "") + lines + (lines == 1 ? " line" : " lines");
+        TextView m = UI.label(c, meta, 11, true);
+        m.setPadding(UI.dp(c, 8), 0, UI.dp(c, 4), 0);
+        head.addView(m);
+        final android.widget.ImageView chev = new android.widget.ImageView(c);
+        chev.setImageResource(R.drawable.mi_chevron_down);
+        chev.setColorFilter(UI.color(c, R.attr.bTextDim));
+        if (closed) head.addView(chev, new LinearLayout.LayoutParams(UI.dp(c, 20), UI.dp(c, 20)));
+        card.addView(head);
+        final LinearLayout bodyBox = UI.vbox(c);
+        card.addView(bodyBox);
+        final boolean[] built = {false};
+        final Runnable show = () -> {
+            if (!built[0]) {
+                View div = new View(c);
+                div.setBackgroundColor(UI.color(c, R.attr.bDivider));
+                bodyBox.addView(div, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(c, 1)));
+                LinearLayout bar = UI.hbox(c);
+                bar.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+                TextView copy = chip(c, "Copy");
+                copy.setOnClickListener(v -> { UI.copy(c, "code", code); UI.toast(c, "Copied"); });
+                bar.addView(copy);
+                bodyBox.addView(bar);
+                bodyBox.addView(codeBody(c, code.length() > 60000 ? code.substring(0, 60000) + "\n… (shortened)" : code, sp, sel, l));
+                built[0] = true;
+            }
+            bodyBox.setVisibility(View.VISIBLE);
+            chev.setRotation(180f);
+        };
+        bodyBox.setVisibility(View.GONE);
+        if (closed) {
+            if (OPEN.contains(key)) show.run();
+            head.setOnClickListener(v -> {
+                if (bodyBox.getVisibility() == View.VISIBLE) { bodyBox.setVisibility(View.GONE); chev.setRotation(0f); OPEN.remove(key); }
+                else { show.run(); if (OPEN.size() > 200) OPEN.clear(); OPEN.add(key); }
+            });
+        }
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = UI.dp(c, 6); lp.bottomMargin = UI.dp(c, 6);
+        lp.topMargin = UI.dp(c, 4); lp.bottomMargin = UI.dp(c, 4);
         out.addView(card, lp);
     }
 

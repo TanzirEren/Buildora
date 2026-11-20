@@ -15,12 +15,13 @@ import java.util.regex.Pattern;
 public final class Protocol {
     private Protocol() {}
 
-    public static final int WRITE = 0, PATCH = 1, DELETE = 2, RENAME = 3;
+    public static final int WRITE = 0, PATCH = 1, DELETE = 2, RENAME = 3, ASSET = 4;
 
     public static final class Op {
         public int type;
         public String path;
-        public String to;                       // RENAME target
+        public String to;                       // RENAME / ASSET target path
+        public String attachment = "";          // ASSET: name of the chat attachment to copy into the project
         public String content = "";             // WRITE
         public final List<String[]> patches = new ArrayList<>();   // PATCH: {search, replace}
         public String lang = "";
@@ -38,6 +39,7 @@ public final class Protocol {
     private static final Pattern FENCE = Pattern.compile("^\\s{0,3}(`{3,}|~{3,})\\s*(.*)$");
     private static final Pattern KV = Pattern.compile("(path|file|delete|rename)\\s*=\\s*[\"']?([^\\s\"']+)[\"']?");
     private static final Pattern PATHLIKE = Pattern.compile("^[\\w.\\-$@+/\\\\]+\\.[A-Za-z0-9]{1,8}$");
+    private static final Pattern ASSETLINE = Pattern.compile("(?i)^(?:import|use|copy-attachment)\\s+(.+?)\\s*(?:->|=>)\\s*(\\S.*)$");
     private static final Pattern DEP = Pattern.compile("^[\\w.\\-]+:[\\w.\\-]+(:[\\w.\\-+]+)?$");
     private static final Set<String> LANGS = new HashSet<>();
     private static final Set<String> EXTS = new HashSet<>();
@@ -86,7 +88,12 @@ public final class Protocol {
             return;
         }
         if (lang.equals("buildora-read")) {
-            for (String l : content.split("\n")) { String p = clean(l); if (p != null && !out.reads.contains(p)) out.reads.add(p); }
+            for (String l : content.split("\n")) {
+                String t = l.trim();
+                if (t.toLowerCase(Locale.ROOT).startsWith("attach:")) { String a = "attach:" + attachName(t); if (a.length() > 7 && !out.reads.contains(a)) out.reads.add(a); continue; }
+                String p = clean(l);
+                if (p != null && !out.reads.contains(p)) out.reads.add(p);
+            }
             return;
         }
         if (lang.equals("buildora-project")) {
@@ -106,6 +113,11 @@ public final class Protocol {
                 if (t.toLowerCase(Locale.ROOT).startsWith("delete ")) {
                     String p = clean(t.substring(7));
                     if (p != null) { Op o = new Op(); o.type = DELETE; o.path = p; out.ops.add(o); }
+                } else if (ASSETLINE.matcher(t).matches()) {
+                    Matcher am = ASSETLINE.matcher(t);
+                    am.matches();
+                    String src = attachName(am.group(1)), dst = clean(am.group(2));
+                    if (!src.isEmpty() && dst != null) { Op o = new Op(); o.type = ASSET; o.attachment = src; o.path = dst; o.to = dst; out.ops.add(o); }
                 } else if (t.toLowerCase(Locale.ROOT).startsWith("rename ") || t.toLowerCase(Locale.ROOT).startsWith("move ")) {
                     String rest = t.substring(t.indexOf(' ') + 1);
                     String[] parts = rest.split("\\s*(->|=>|\\s)\\s*");
@@ -152,6 +164,16 @@ public final class Protocol {
             o.content = content;
         }
         out.ops.add(o);
+    }
+
+    /** Attachment names are flat: drop quotes, an "attach:" prefix and any folder part. */
+    static String attachName(String raw) {
+        String n = raw.trim().replace("`", "").replace("\"", "").replace("'", "");
+        if (n.toLowerCase(Locale.ROOT).startsWith("attach:")) n = n.substring(7);
+        n = n.replace('\\', '/');
+        int sl = n.lastIndexOf('/');
+        if (sl >= 0) n = n.substring(sl + 1);
+        return n.trim().equals("..") ? "" : n.trim();
     }
 
     private static void parsePatches(Op o, String content) {

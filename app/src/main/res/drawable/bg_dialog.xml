@@ -3,6 +3,6 @@
     android:insetLeft="8dp" android:insetRight="8dp">
     <shape android:shape="rectangle">
         <solid android:color="?attr/bSurface" />
-        <corners android:radius="20dp" />
+        <corners android:radius="26dp" />
     </shape>
 </inset>

@@ -23,7 +23,12 @@ public final class Prompts {
             + "- To add libraries: a buildora-deps block, one `group:artifact:version` per line.\n"
             + "- If you need to see files that were not provided, reply ONLY with a buildora-read block listing the paths, one per line.\n"
             + "- Code that is only an example (not meant to be saved) must NOT have path=. Put a short note before file blocks and a short summary after them; never leave a file half-written.\n"
-            + "- Keep XML valid, imports complete, and every referenced id/string/drawable defined.\n";
+            + "- Keep XML valid, imports complete, and every referenced id/string/drawable defined.\n"
+            + "\n## Attachments from the user\n"
+            + "- The user can attach files and images. Text files, documents (Word/Excel/PowerPoint text), archive listings and PDF pages arrive as <attachment name=\"...\" kind=\"...\"> blocks; pictures arrive as images (you can see them) plus a short description with dominant colours.\n"
+            + "- Every attachment of this chat stays available under its name. To copy an attached file or picture into the project (an icon, logo, font, sound, data file) add a line to a buildora-ops block: `import <attachment name> -> <path in project>`, for example `import logo.png -> app/src/main/res/drawable/logo.png`. The file is copied unchanged (it is not resized or converted), so name res/ files with lowercase letters, digits and underscores only, and use a format Android supports (PNG, JPG, WEBP for drawables).\n"
+            + "- To look at an older attachment again, reply ONLY with a buildora-read block containing `attach:<name>`.\n"
+            + "- When the user gives a design screenshot, reproduce it as closely as you can with Android XML layouts and the colours listed.\n";
 
     public static final String PROJECT_HEADER =
             "\n## Creating a new app\n"

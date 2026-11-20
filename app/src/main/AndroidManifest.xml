@@ -42,8 +42,27 @@
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode" />
 
         <activity android:name=".SettingsActivity" android:exported="false" />
-        <activity android:name=".ai.AiChatActivity" android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".ai.AiChatActivity" android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
         <activity android:name=".ai.AiProvidersActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".VariantsActivity" android:exported="false"
@@ -54,6 +73,7 @@
             android:windowSoftInputMode="adjustResize" />
 
         <service android:name=".BuildService" android:exported="false" />
+        <service android:name=".ai.AiService" android:exported="false" />
 
         <activity android:name=".LogcatActivity" android:exported="false" />
         <activity android:name=".PreviewActivity" android:exported="false" />

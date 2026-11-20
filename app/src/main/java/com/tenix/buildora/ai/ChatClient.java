@@ -31,12 +31,54 @@ public final class ChatClient {
         void onDelta(String text);
         void onDone(String full);
         void onError(String message, String partial);
+        /** Token counts reported by the provider (0 when it did not report them). */
+        default void onUsage(int promptTokens, int completionTokens) { }
+        /** The client moved on to another API key because the previous one hit a limit or was rejected. */
+        default void onKeySwitch(String message) { }
     }
 
     public static final class Options {
         public double temperature = 0.3;
         public int maxTokens = 0;       // 0 = provider default
         public boolean stream = true;
+        public boolean streamUsage;      // ask OpenAI-style servers to report usage in the stream
+    }
+
+    private volatile int usageIn, usageOut;
+
+    /** Estimated tokens for a text (about 3.6 characters per token). */
+    public static int estimateTokens(String s) { return s == null ? 0 : (int) Math.ceil(s.length() / 3.6); }
+
+    /** Hosts known to accept stream_options.include_usage. */
+    public static boolean knowsStreamUsage(AiProvider p) {
+        String u = p.baseUrl == null ? "" : p.baseUrl.toLowerCase(java.util.Locale.ROOT);
+        String[] hosts = {"api.openai.com", "openrouter.ai", "api.groq.com", "api.deepseek.com", "api.mistral.ai", "api.x.ai",
+                "api.together.xyz", "api.fireworks.ai", "api.cerebras.ai", "api.sambanova.ai", "integrate.api.nvidia.com"};
+        for (String h : hosts) if (u.contains(h)) return true;
+        return false;
+    }
+
+    /** How long a key should rest after an HTTP error (0 = do not rotate keys for this error). */
+    static long restMillis(int code, String body, String retryAfter) {
+        String b = body == null ? "" : body.toLowerCase(java.util.Locale.ROOT);
+        switch (code) {
+            case 401: return 24L * 3600000L;
+            case 403: return b.contains("quota") || b.contains("limit") ? 6L * 3600000L : 24L * 3600000L;
+            case 402: return 12L * 3600000L;
+            case 429: {
+                boolean quota = b.contains("quota") || b.contains("billing") || b.contains("credit") || b.contains("insufficient")
+                        || b.contains("daily") || b.contains("per day") || b.contains("exceeded your") || b.contains("monthly");
+                if (quota) return 6L * 3600000L;
+                long ra = 0;
+                try { if (retryAfter != null) ra = (long) (Double.parseDouble(retryAfter.trim()) * 1000); } catch (NumberFormatException ignored) { }
+                return Math.min(Math.max(ra, 60000L), 6L * 3600000L);
+            }
+            default: return 0;
+        }
+    }
+
+    static String restWhy(int code) {
+        switch (code) { case 401: return "key rejected"; case 403: return "key not allowed"; case 402: return "credits used up"; default: return "limit reached"; }
     }
 
     private volatile boolean cancelled;
@@ -69,7 +111,9 @@ public final class ChatClient {
         }
         sb.append("],\"temperature\":").append(o.temperature);
         if (o.maxTokens > 0) sb.append(",\"max_tokens\":").append(o.maxTokens);
-        sb.append(",\"stream\":").append(stream).append('}');
+        sb.append(",\"stream\":").append(stream);
+        if (stream && o.streamUsage) sb.append(",\"stream_options\":{\"include_usage\":true}");
+        sb.append('}');
         return sb.toString();
     }
 
@@ -105,12 +149,16 @@ public final class ChatClient {
         boolean anth = p.kind == AiProvider.KIND_ANTHROPIC;
         String url = p.base() + (anth ? "/messages" : "/chat/completions");
         String body = anth ? anthropicBody(model, msgs, o, o.stream) : openAiBody(model, msgs, o, o.stream);
-        Map<String, String> h = ModelFetcher.headers(p);
-        h.put("Content-Type", "application/json");
-        h.put("Accept", o.stream ? "text/event-stream" : "application/json");
+        usageIn = 0; usageOut = 0;
+        final List<AiProvider.KeySlot> tried = new ArrayList<>();
+        AiProvider.KeySlot slot = pickFirst(p, tried);
         int attempt = 0;
         while (true) {
             attempt++;
+            if (slot != null && !tried.contains(slot)) tried.add(slot);
+            Map<String, String> h = ModelFetcher.headers(p, slot == null ? "" : slot.key);
+            h.put("Content-Type", "application/json");
+            h.put("Accept", o.stream ? "text/event-stream" : "application/json");
             try {
                 HttpURLConnection c = Http.open(url, "POST", h, 180000);
                 conn = c;
@@ -121,22 +169,39 @@ public final class ChatClient {
                 int code = c.getResponseCode();
                 if (code != 200) {
                     String eb = Http.errorBody(c);
+                    String ra = c.getHeaderField("Retry-After");
                     c.disconnect();
+                    long rest = slot == null ? 0 : restMillis(code, eb, ra);
+                    if (rest > 0 && full.length() == 0 && !cancelled) {
+                        p.block(slot, System.currentTimeMillis() + rest, "HTTP " + code + " (" + restWhy(code) + ")");
+                        AiProvider.KeySlot nx = p.nextKey(System.currentTimeMillis(), tried);
+                        if (nx != null) {
+                            cb.onKeySwitch("API key " + keyName(p, slot) + " " + restWhy(code) + " - switched to key " + keyName(p, nx));
+                            slot = nx;
+                            attempt = 0;
+                            continue;
+                        }
+                    }
                     if ((code == 429 || code == 502 || code == 503 || code == 504) && attempt < 3 && !cancelled && full.length() == 0) {
                         try { Thread.sleep(1500L * attempt); } catch (InterruptedException ie) { }
                         continue;
                     }
-                    cb.onError(Http.niceError(code, eb), full.toString());
+                    String msg = Http.niceError(code, eb);
+                    if (rest > 0 && p.keyCount() > 1) msg += "\nAll " + p.keyCount() + " API keys are limited or rejected right now.";
+                    cb.onError(msg, full.toString());
                     return;
                 }
                 if (o.stream) readSse(c, anth, full, cb);
                 else {
                     String resp = Http.readAll(c.getInputStream());
                     String t = anth ? parseAnthropicFull(resp) : parseOpenAiFull(resp);
+                    readUsageFull(resp, anth);
                     full.append(t);
                     if (!t.isEmpty()) cb.onDelta(t);
                 }
                 c.disconnect();
+                if (slot != null && full.length() > 0) p.markUsed(slot);
+                if (usageIn > 0 || usageOut > 0) cb.onUsage(usageIn, usageOut);
                 if (cancelled) { cb.onDone(full.toString()); return; }
                 if (full.length() == 0) { cb.onError("The model returned an empty reply.", ""); return; }
                 cb.onDone(full.toString());
@@ -157,6 +222,34 @@ public final class ChatClient {
         }
     }
 
+    private static AiProvider.KeySlot pickFirst(AiProvider p, List<AiProvider.KeySlot> tried) {
+        if (p.keyCount() == 0) return null;
+        AiProvider.KeySlot k = p.nextKey(System.currentTimeMillis(), tried);
+        return k != null ? k : p.soonestKey(tried);
+    }
+
+    private static String keyName(AiProvider p, AiProvider.KeySlot k) {
+        int i = p.keys.indexOf(k) + 1;
+        return "#" + i + (k.label.isEmpty() ? "" : " (" + k.label + ")");
+    }
+
+    private void readUsageFull(String resp, boolean anth) {
+        try { absorbUsage(MiniJson.object(MiniJson.parse(resp)), anth); } catch (Exception ignored) { }
+    }
+
+    /** Reads token counts from an OpenAI-style "usage" object or the Anthropic message / delta usage. */
+    void absorbUsage(Map<String, Object> m, boolean anth) {
+        if (m == null) return;
+        Map<String, Object> u = MiniJson.object(m.get("usage"));
+        if (u == null) { Map<String, Object> msg = MiniJson.object(m.get("message")); if (msg != null) u = MiniJson.object(msg.get("usage")); }
+        if (u == null) return;
+        int in = num(u.get(anth ? "input_tokens" : "prompt_tokens")), out = num(u.get(anth ? "output_tokens" : "completion_tokens"));
+        if (in > 0) usageIn = in;
+        if (out > 0) usageOut = out;
+    }
+
+    private static int num(Object o) { return o instanceof Number ? ((Number) o).intValue() : 0; }
+
     private void readSse(HttpURLConnection c, boolean anth, StringBuilder full, Callback cb) throws IOException {
         BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"));
         String line;
@@ -171,6 +264,7 @@ public final class ChatClient {
             try {
                 Map<String, Object> m = MiniJson.object(MiniJson.parse(d));
                 if (m == null) continue;
+                absorbUsage(m, anth);
                 String t = anth ? anthropicDelta(m, event) : openAiDelta(m);
                 if (t == null) continue;
                 if (t.startsWith("\u0000ERR")) throw new IOException(t.substring(4));

@@ -20,6 +20,7 @@ import android.widget.TextView;
 
 import com.tenix.buildora.BaseActivity;
 import com.tenix.buildora.R;
+import com.tenix.buildora.core.MenuSheet;
 import com.tenix.buildora.core.UI;
 
 import java.util.ArrayList;
@@ -49,25 +50,29 @@ public class AiProvidersActivity extends BaseActivity {
         top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         final ImageButton more = new ImageButton(this, null, 0, R.style.BIconBtn);
         more.setImageResource(R.drawable.ic_more);
-        more.setOnClickListener(v -> {
-            PopupMenu pm = new PopupMenu(this, more);
-            pm.getMenu().add(0, 1, 0, "Import providers (from clipboard)");
-            pm.getMenu().add(0, 2, 1, "Export providers (copy, no keys)");
-            pm.getMenu().add(0, 3, 2, "Switch all on");
-            pm.getMenu().add(0, 4, 3, "Switch all off");
-            pm.setOnMenuItemClickListener(mi -> {
-                switch (mi.getItemId()) {
-                    case 1: importClipboard(); break;
-                    case 2: UI.copy(this, "providers", store.exportJson()); UI.toast(this, "Copied (API keys are not included)"); break;
-                    case 3: case 4:
-                        for (AiProvider p : store.all()) { p.enabled = mi.getItemId() == 3; store.replace(p); }
-                        render();
-                        break;
-                }
-                return true;
-            });
-            pm.show();
-        });
+        more.setOnClickListener(v -> new MenuSheet(this)
+                .add(1, R.drawable.mi_download, "Import providers", "From the clipboard")
+                .add(2, R.drawable.mi_export, "Export providers", "Copied without API keys")
+                .divider()
+                .add(3, R.drawable.mi_toggle_on, "Switch all on")
+                .add(4, R.drawable.mi_toggle_off, "Switch all off")
+                .divider()
+                .add(5, R.drawable.mi_refresh, "Reset key limits", "Make every API key usable again")
+                .show(v, id -> {
+                    switch (id) {
+                        case 1: importClipboard(); break;
+                        case 2: UI.copy(this, "providers", store.exportJson()); UI.toast(this, "Copied (API keys are not included)"); break;
+                        case 3: case 4:
+                            for (AiProvider p : store.all()) { p.enabled = id == 3; store.replace(p); }
+                            render();
+                            break;
+                        case 5:
+                            for (AiProvider p : store.all()) p.resetLimits();
+                            render();
+                            UI.toast(this, "All API keys are ready again");
+                            break;
+                    }
+                }));
         top.addView(more, new LinearLayout.LayoutParams(UI.dp(this, 48), UI.dp(this, 56)));
         root.addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(this, 56)));
 
@@ -154,7 +159,7 @@ public class AiProvidersActivity extends BaseActivity {
         head.addView(more, new LinearLayout.LayoutParams(UI.dp(this, 40), UI.dp(this, 40)));
         c.addView(head);
         boolean isDef = p.id.equals(store.defaultProviderId());
-        String stat = p.models.size() + " models · " + p.freeCount() + " free · " + p.enabledCount() + " on" + (isDef ? "  ·  default" : "") + (p.apiKey.isEmpty() ? "  ·  no key" : "");
+        String stat = p.models.size() + " models · " + p.freeCount() + " free · " + p.enabledCount() + " on" + (isDef ? "  ·  default" : "") + (p.keyCount() == 0 ? "  ·  no key" : p.keyCount() > 1 ? "  ·  " + p.keyCount() + " keys" + (p.usableKeyCount(System.currentTimeMillis()) < p.keyCount() ? " (" + (p.keyCount() - p.usableKeyCount(System.currentTimeMillis())) + " limited)" : "") : "");
         TextView st = UI.label(this, stat, 12, true);
         st.setPadding(0, UI.dp(this, 6), 0, 0);
         c.addView(st);
@@ -164,33 +169,34 @@ public class AiProvidersActivity extends BaseActivity {
     }
 
     private void menu(final AiProvider p, View anchor) {
-        PopupMenu pm = new PopupMenu(this, anchor);
-        pm.getMenu().add(0, 1, 0, "Edit / manage models");
-        pm.getMenu().add(0, 2, 1, "Refresh models");
-        pm.getMenu().add(0, 3, 2, "Test connection");
-        pm.getMenu().add(0, 4, 3, "Make default");
-        pm.getMenu().add(0, 5, 4, "Duplicate");
-        pm.getMenu().add(0, 6, 5, "Delete");
-        pm.setOnMenuItemClickListener(mi -> {
-            switch (mi.getItemId()) {
-                case 1: showEditor(p); break;
-                case 2: refreshModels(p); break;
-                case 3: testProvider(p); break;
-                case 4: {
-                    AiModel first = null;
-                    for (AiModel m : p.models) if (m.enabled) { first = m; break; }
-                    if (first == null) UI.toast(this, "Switch on a model first"); else { store.setDefault(p.id, first.id); render(); }
-                    break;
-                }
-                case 5: { AiProvider cpy = p.copy(true); cpy.name = p.name + " (copy)"; store.add(cpy); render(); break; }
-                case 6:
-                    UI.dialog(this).setTitle("Delete " + p.name + "?").setMessage("The provider, its API key and model choices are removed from this phone.")
-                            .setPositiveButton("Delete", (d, w) -> { store.remove(p.id); render(); }).setNegativeButton("Cancel", null).show();
-                    break;
-            }
-            return true;
-        });
-        pm.show();
+        new MenuSheet(this)
+                .add(1, R.drawable.mi_sliders, "Edit & manage models")
+                .add(7, R.drawable.mi_key, "API keys", p.keyCount() + (p.keyCount() == 1 ? " key" : " keys"))
+                .add(2, R.drawable.mi_refresh, "Refresh models")
+                .add(3, R.drawable.mi_plug, "Test connection")
+                .divider()
+                .add(4, R.drawable.mi_star, "Make default")
+                .add(5, R.drawable.mi_duplicate, "Duplicate")
+                .divider()
+                .danger(6, R.drawable.mi_trash, "Delete")
+                .show(anchor, id -> {
+                    switch (id) {
+                        case 1: case 7: showEditor(p); break;
+                        case 2: refreshModels(p); break;
+                        case 3: testProvider(p); break;
+                        case 4: {
+                            AiModel first = null;
+                            for (AiModel m : p.models) if (m.enabled) { first = m; break; }
+                            if (first == null) UI.toast(this, "Switch on a model first"); else { store.setDefault(p.id, first.id); render(); }
+                            break;
+                        }
+                        case 5: { AiProvider cpy = p.copy(true); cpy.name = p.name + " (copy)"; store.add(cpy); render(); break; }
+                        case 6:
+                            UI.dialog(this).setTitle("Delete " + p.name + "?").setMessage("The provider, its API keys and model choices are removed from this phone.")
+                                    .setPositiveButton("Delete", (d, w) -> { store.remove(p.id); render(); }).setNegativeButton("Cancel", null).show();
+                            break;
+                    }
+                });
     }
 
     private void importClipboard() {
@@ -253,8 +259,7 @@ public class AiProvidersActivity extends BaseActivity {
         final EditText name = UI.input(this, "Name (e.g. My OpenRouter)", work.name);
         final EditText url = UI.input(this, "Base URL (https://…/v1)", work.baseUrl);
         url.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        final EditText key = UI.input(this, "API key", work.apiKey);
-        key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        final KeysEditor keys = new KeysEditor(work, preset[0].keyHint);
         final EditText ids = UI.input(this, "Model IDs - one per line", "");
         ids.setSingleLine(false);
         ids.setMinLines(2);
@@ -263,31 +268,7 @@ public class AiProvidersActivity extends BaseActivity {
         ids.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         box.addView(name);
         box.addView(url);
-        LinearLayout keyRow = UI.hbox(this);
-        keyRow.addView(key, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        TextView show = UI.label(this, "Show", 12.5f, false);
-        show.setTextColor(UI.color(this, R.attr.bAccent));
-        show.setPadding(UI.dp(this, 10), UI.dp(this, 14), UI.dp(this, 4), 0);
-        final boolean[] shown = {false};
-        show.setOnClickListener(v -> {
-            shown[0] = !shown[0];
-            key.setInputType(InputType.TYPE_CLASS_TEXT | (shown[0] ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD));
-            ((TextView) v).setText(shown[0] ? "Hide" : "Show");
-            key.setSelection(key.length());
-        });
-        TextView paste = UI.label(this, "Paste", 12.5f, false);
-        paste.setTextColor(UI.color(this, R.attr.bAccent));
-        paste.setPadding(UI.dp(this, 10), UI.dp(this, 14), UI.dp(this, 4), 0);
-        paste.setOnClickListener(v -> {
-            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip().getItemCount() > 0) {
-                CharSequence t = cm.getPrimaryClip().getItemAt(0).getText();
-                if (t != null) key.setText(t.toString().trim());
-            }
-        });
-        keyRow.addView(paste);
-        keyRow.addView(show);
-        box.addView(keyRow);
+        box.addView(keys.root);
         box.addView(ids);
 
         final TextView fetch = UI.button(this, "Fetch models", false);
@@ -309,14 +290,14 @@ public class AiProvidersActivity extends BaseActivity {
             note.setVisibility(ps.note.isEmpty() ? View.GONE : View.VISIBLE);
             if (!ps.id.equals("custom")) { name.setText(ps.name); url.setText(ps.baseUrl); }
             else if (adding) { name.setText(""); url.setText(""); }
-            key.setHint(ps.keyHint);
+            keys.setHint(ps.keyHint);
         }).show());
         note.setVisibility(preset[0].note.isEmpty() ? View.GONE : View.VISIBLE);
 
         final Runnable readFields = () -> {
             work.name = name.getText().toString().trim();
             work.baseUrl = url.getText().toString().trim();
-            work.apiKey = key.getText().toString().trim();
+            work.setKeys(keys.collect());
             if (work.name.isEmpty()) work.name = preset[0].name;
             for (String line : ids.getText().toString().split("\n")) {
                 String id = line.trim();
@@ -369,7 +350,7 @@ public class AiProvidersActivity extends BaseActivity {
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             readFields.run();
             if (work.baseUrl.isEmpty() || !work.baseUrl.startsWith("http")) { UI.toast(c, "Base URL must start with http:// or https://"); return; }
-            if (work.apiKey.isEmpty() && !work.baseUrl.contains("localhost") && !work.baseUrl.contains("127.0.0.1") && !work.baseUrl.contains("192.168."))
+            if (work.keyCount() == 0 && !work.baseUrl.contains("localhost") && !work.baseUrl.contains("127.0.0.1") && !work.baseUrl.contains("192.168."))
                 UI.toast(c, "No API key set - most providers need one");
             if (work.models.isEmpty()) UI.toast(c, "No models yet - use Fetch models or type ids");
             if (adding) store.add(work); else store.replace(work);
@@ -383,7 +364,167 @@ public class AiProvidersActivity extends BaseActivity {
             if (m == null) { UI.toast(c, "Switch on a model first"); return; }
             final String mid = m.id;
             status.setText("Testing " + mid + "…");
-            new Thread(() -> { final String e = ChatClient.test(work, mid); ui(() -> status.setText(e == null ? "Connection OK ✓" : e)); }).start();
+            new Thread(() -> {
+                final StringBuilder res = new StringBuilder();
+                if (work.keyCount() <= 1) {
+                    String e = ChatClient.test(work, mid);
+                    res.append(e == null ? "Connection OK ✓" : e);
+                } else {
+                    int i = 0;
+                    for (AiProvider.KeySlot k : new ArrayList<>(work.keys)) {
+                        i++;
+                        AiProvider one = work.copy(true);
+                        one.keys.clear();
+                        one.keys.add(new AiProvider.KeySlot(k.key));
+                        String e = ChatClient.test(one, mid);
+                        res.append("Key #").append(i).append(": ").append(e == null ? "works ✓" : "✗ " + firstLine(e)).append('\n');
+                    }
+                }
+                ui(() -> status.setText(res.toString().trim()));
+            }).start();
         });
+    }
+
+    private static String firstLine(String s) { int n = s.indexOf('\n'); return n < 0 ? s : s.substring(0, n); }
+
+    /** The list of API keys of one provider. When a key hits its limit the next one is used automatically. */
+    private final class KeysEditor {
+        final LinearLayout root;
+        private final LinearLayout list;
+        private final List<EditText> fields = new ArrayList<>();
+        private final List<AiProvider.KeySlot> slots = new ArrayList<>();
+        private final List<TextView> statuses = new ArrayList<>();
+        private String hint;
+        private boolean shown;
+        private TextView showBtn, resetBtn;
+
+        KeysEditor(AiProvider work, String hint) {
+            this.hint = hint;
+            final Context c = AiProvidersActivity.this;
+            root = UI.vbox(c);
+            LinearLayout head = UI.hbox(c);
+            head.setPadding(0, UI.dp(c, 12), 0, 0);
+            TextView t = UI.label(c, "API keys", 13, false);
+            t.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+            head.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView paste = UI.label(c, "Paste", 12.5f, false);
+            paste.setTextColor(UI.color(c, R.attr.bAccent));
+            paste.setPadding(UI.dp(c, 10), UI.dp(c, 4), UI.dp(c, 10), UI.dp(c, 4));
+            paste.setOnClickListener(v -> pasteInto());
+            head.addView(paste);
+            showBtn = UI.label(c, "Show", 12.5f, false);
+            showBtn.setTextColor(UI.color(c, R.attr.bAccent));
+            showBtn.setPadding(UI.dp(c, 10), UI.dp(c, 4), 0, UI.dp(c, 4));
+            showBtn.setOnClickListener(v -> {
+                shown = !shown;
+                showBtn.setText(shown ? "Hide" : "Show");
+                for (EditText e : fields) { e.setInputType(InputType.TYPE_CLASS_TEXT | (shown ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD)); }
+            });
+            head.addView(showBtn);
+            root.addView(head);
+            TextView sub = UI.label(c, "Add more than one key. When a key reaches its limit (or is rejected), the next key starts automatically.", 11, true);
+            root.addView(sub);
+            list = UI.vbox(c);
+            root.addView(list);
+            for (AiProvider.KeySlot k : work.keys) addRow(k);
+            if (slots.isEmpty()) addRow(new AiProvider.KeySlot(""));
+            LinearLayout foot = UI.hbox(c);
+            foot.setPadding(0, UI.dp(c, 6), 0, 0);
+            TextView add = UI.button(c, "＋ Add another key", false);
+            add.setOnClickListener(v -> { addRow(new AiProvider.KeySlot("")); });
+            foot.addView(add, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            resetBtn = UI.label(c, "Reset limits", 12.5f, false);
+            resetBtn.setTextColor(UI.color(c, R.attr.bAccent));
+            resetBtn.setPadding(UI.dp(c, 12), UI.dp(c, 12), UI.dp(c, 4), UI.dp(c, 12));
+            resetBtn.setOnClickListener(v -> { for (AiProvider.KeySlot k : slots) { k.blockedUntil = 0; k.lastError = ""; } refreshStatus(); });
+            foot.addView(resetBtn);
+            root.addView(foot);
+            refreshStatus();
+        }
+
+        void setHint(String h) { hint = h; if (!fields.isEmpty() && fields.get(0).getText().length() == 0) fields.get(0).setHint(h); }
+
+        private void pasteInto() {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm == null || !cm.hasPrimaryClip() || cm.getPrimaryClip().getItemCount() == 0) return;
+            CharSequence t = cm.getPrimaryClip().getItemAt(0).getText();
+            if (t == null) return;
+            // several keys (one per line) can be pasted at once
+            List<String> lines = new ArrayList<>();
+            for (String l : t.toString().split("[\\r\\n,; ]+")) if (l.trim().length() >= 8) lines.add(l.trim());
+            if (lines.isEmpty()) { UI.toast(AiProvidersActivity.this, "Clipboard has no key"); return; }
+            int next = 0;
+            for (EditText e : fields) if (e.getText().length() == 0 && next < lines.size()) e.setText(lines.get(next++));
+            while (next < lines.size()) { addRow(new AiProvider.KeySlot(lines.get(next++))); }
+        }
+
+        private void addRow(final AiProvider.KeySlot slot) {
+            final Context c = AiProvidersActivity.this;
+            LinearLayout row = UI.hbox(c);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            final LinearLayout wrap = UI.vbox(c);
+            final int idx = slots.size() + 1;
+            TextView num = UI.label(c, String.valueOf(idx), 12, true);
+            num.setGravity(Gravity.CENTER);
+            num.setBackgroundResource(R.drawable.bg_tag_ext);
+            row.addView(num, new LinearLayout.LayoutParams(UI.dp(c, 24), UI.dp(c, 24)));
+            final EditText e = UI.input(c, idx == 1 ? hint : "API key " + idx, slot.key);
+            e.setInputType(InputType.TYPE_CLASS_TEXT | (shown ? InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD : InputType.TYPE_TEXT_VARIATION_PASSWORD));
+            LinearLayout.LayoutParams el = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            el.leftMargin = UI.dp(c, 8);
+            row.addView(e, el);
+            Switch sw = new Switch(c);
+            sw.setChecked(slot.enabled);
+            sw.setOnCheckedChangeListener((b, on) -> { slot.enabled = on; refreshStatus(); });
+            row.addView(sw);
+            ImageButton del = new ImageButton(c, null, 0, R.style.BIconBtn);
+            del.setImageResource(R.drawable.mi_trash);
+            del.setColorFilter(UI.color(c, R.attr.bTextDim));
+            del.setOnClickListener(v -> {
+                int at = fields.indexOf(e);
+                if (slots.size() <= 1) { e.setText(""); return; }
+                fields.remove(at); slots.remove(at); statuses.remove(at);
+                list.removeView(wrap);
+                refreshStatus();
+            });
+            row.addView(del, new LinearLayout.LayoutParams(UI.dp(c, 38), UI.dp(c, 42)));
+            wrap.addView(row);
+            TextView st = UI.label(c, "", 11, true);
+            st.setPadding(UI.dp(c, 32), 0, 0, UI.dp(c, 2));
+            wrap.addView(st);
+            list.addView(wrap);
+            fields.add(e); slots.add(slot); statuses.add(st);
+            refreshStatus();
+        }
+
+        private void refreshStatus() {
+            long now = System.currentTimeMillis();
+            boolean inUse = false, anyLimited = false;
+            for (int i = 0; i < slots.size(); i++) {
+                AiProvider.KeySlot k = slots.get(i);
+                boolean empty = fields.get(i).getText().length() == 0;
+                String t;
+                if (empty) t = "";
+                else if (!k.enabled) t = "Off - skipped";
+                else if (k.blockedUntil > now) {
+                    long min = Math.max(1, (k.blockedUntil - now) / 60000);
+                    t = "⛔ Limit reached - available again in " + (min >= 120 ? (min / 60) + " h" : min + " min") + (k.lastError.isEmpty() ? "" : "  (" + k.lastError + ")");
+                    anyLimited = true;
+                } else if (!inUse) { t = "● In use now" + (k.uses > 0 ? "  ·  " + k.uses + " requests" : ""); inUse = true; }
+                else t = "Ready - backup";
+                statuses.get(i).setText(t);
+            }
+            if (resetBtn != null) resetBtn.setVisibility(anyLimited ? View.VISIBLE : View.GONE);
+        }
+
+        List<AiProvider.KeySlot> collect() {
+            List<AiProvider.KeySlot> out = new ArrayList<>();
+            for (int i = 0; i < slots.size(); i++) {
+                AiProvider.KeySlot k = slots.get(i);
+                k.key = fields.get(i).getText().toString().trim();
+                if (!k.key.isEmpty()) out.add(k);
+            }
+            return out;
+        }
     }
 }

@@ -19,6 +19,7 @@ import android.widget.TextView;
 import com.tenix.buildora.BaseActivity;
 import com.tenix.buildora.IdeActivity;
 import com.tenix.buildora.R;
+import com.tenix.buildora.core.MenuSheet;
 import com.tenix.buildora.core.UI;
 
 import java.io.File;
@@ -53,6 +54,10 @@ public class AiChatActivity extends BaseActivity {
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
         top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        tokenBox = TokenBadge.create(this, v -> { if (panel != null) panel.showUsage(); });
+        LinearLayout.LayoutParams tbl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tbl.rightMargin = UI.dp(this, 2);
+        top.addView(tokenBox, tbl);
         final ImageButton neu = new ImageButton(this, null, 0, R.style.BIconBtn);
         neu.setImageResource(R.drawable.ic_edit);
         neu.setOnClickListener(v -> newChat(""));
@@ -64,7 +69,8 @@ public class AiChatActivity extends BaseActivity {
         main.addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, UI.dp(this, 52)));
 
         panel = new ChatPanel(this, new ChatPanel.Host() {
-            @Override public void chatChanged(Chat c) { updateTitle(c); if (drawer != null) { drawer.setCurrent(c.id); drawer.refresh(); } }
+            @Override public void usageChanged() { if (panel != null) TokenBadge.set(tokenBox, panel.totalTokens()); }
+            @Override public void chatChanged(Chat c) { updateTitle(c); if (panel != null) TokenBadge.set(tokenBox, panel.totalTokens()); if (drawer != null) { drawer.setCurrent(c.id); drawer.refresh(); } }
             @Override public void openIde(File r) { openProject(r); }
             @Override public void projectCreated(File r, Chat c) { if (drawer != null) drawer.refresh(); }
         });
@@ -99,13 +105,33 @@ public class AiChatActivity extends BaseActivity {
         styleBars();
 
         Intent in = getIntent();
-        String cid = in.getStringExtra(EXTRA_CHAT);
-        String proj = in.getStringExtra(EXTRA_PROJECT);
+        boolean shared = Intent.ACTION_SEND.equals(in.getAction()) || Intent.ACTION_SEND_MULTIPLE.equals(in.getAction());
+        String cid = shared ? null : in.getStringExtra(EXTRA_CHAT);       // other apps may only share content, not pick chats
+        String proj = shared ? null : in.getStringExtra(EXTRA_PROJECT);
         if (cid != null && Ai.chats(this).load(cid) != null) panel.openChat(Ai.chats(this).load(cid));
         else if (proj != null) panel.newChat(proj);
-        String prompt = in.getStringExtra(EXTRA_PROMPT);
+        String prompt = shared ? null : in.getStringExtra(EXTRA_PROMPT);
         if (prompt != null && !prompt.isEmpty()) panel.sendPrompt(prompt);
         drawer.setCurrent(panel.chat().id);
+        handleShare(in);
+        TokenBadge.set(tokenBox, panel.totalTokens());
+    }
+
+    /** Files or text shared to Buildora AI from another app. */
+    private void handleShare(Intent in) {
+        String a = in.getAction();
+        if (!Intent.ACTION_SEND.equals(a) && !Intent.ACTION_SEND_MULTIPLE.equals(a)) return;
+        java.util.List<android.net.Uri> uris = new java.util.ArrayList<>();
+        if (Intent.ACTION_SEND.equals(a)) {
+            android.net.Uri u = in.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (u != null) uris.add(u);
+        } else {
+            java.util.ArrayList<android.net.Uri> l = in.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (l != null) uris.addAll(l);
+        }
+        String text = in.getStringExtra(Intent.EXTRA_TEXT);
+        if (text != null && !text.isEmpty() && uris.isEmpty()) panel.setInputText(text);
+        if (!uris.isEmpty()) panel.attachUris(uris);
     }
 
     private void newChat(String projectRoot) { newChat(projectRoot, ""); }
@@ -116,6 +142,8 @@ public class AiChatActivity extends BaseActivity {
         drawer.setCurrent(panel.chat().id);
         updateTitle(panel.chat());
     }
+
+    private TextView tokenBox;
 
     private void updateTitle(Chat c) {
         if (title == null) return;
@@ -148,17 +176,20 @@ public class AiChatActivity extends BaseActivity {
     }
 
     private void moreMenu(View anchor) {
-        PopupMenu pm = new PopupMenu(this, anchor);
         final Chat c = panel.chat();
-        pm.getMenu().add(0, 1, 0, "Rename chat");
-        pm.getMenu().add(0, 2, 1, "Copy whole chat");
-        pm.getMenu().add(0, 3, 2, "Clear messages");
         File r = panel.root();
-        if (r != null) pm.getMenu().add(0, 4, 3, "Open project in IDE");
-        pm.getMenu().add(0, 5, 4, "AI providers");
-        pm.getMenu().add(0, 6, 5, "Delete chat");
-        pm.setOnMenuItemClickListener(mi -> {
-            switch (mi.getItemId()) {
+        MenuSheet ms = new MenuSheet(this)
+                .add(1, R.drawable.mi_rename, "Rename chat")
+                .add(2, R.drawable.mi_copy, "Copy whole chat")
+                .add(7, R.drawable.mi_stats, "Token usage")
+                .divider();
+        if (r != null) ms.add(4, R.drawable.mi_code, "Open project in IDE");
+        ms.add(5, R.drawable.mi_server, "AI providers & keys")
+          .divider()
+          .add(3, R.drawable.mi_eraser, "Clear messages")
+          .danger(6, R.drawable.mi_trash, "Delete chat");
+        ms.show(anchor, id -> {
+            switch (id) {
                 case 1: {
                     final EditText e = UI.input(this, "Chat title", c.title);
                     LinearLayout box = UI.vbox(this);
@@ -171,21 +202,24 @@ public class AiChatActivity extends BaseActivity {
                     break;
                 }
                 case 2: UI.copy(this, "chat", c.toMarkdown()); UI.toast(this, "Copied"); break;
-                case 3: c.messages.clear(); Ai.chats(this).save(c); panel.openChat(c); drawer.refresh(); break;
+                case 3: c.messages.clear(); c.tokensIn = 0; c.tokensOut = 0; Ai.chats(this).save(c); panel.openChat(c); drawer.refresh(); break;
                 case 4: openProject(panel.root()); break;
                 case 5: startActivity(new Intent(this, AiProvidersActivity.class)); break;
+                case 7: panel.showUsage(); break;
                 case 6:
                     UI.dialog(this).setTitle("Delete this chat?").setPositiveButton("Delete", (d, w) -> {
                         Ai.chats(this).delete(c.id); panel.newChat(""); drawer.refresh();
                     }).setNegativeButton("Cancel", null).show();
                     break;
             }
-            return true;
         });
-        pm.show();
     }
 
     @Override protected void onPause() { super.onPause(); panel.onPause(); }
+
+    @Override protected void onResume() { super.onResume(); panel.onResume(); TokenBadge.set(tokenBox, panel.totalTokens()); }
+
+    @Override protected void onDestroy() { if (panel != null) panel.detach(); super.onDestroy(); }
 
     @Override public void onBackPressed() {
         if (drawerOpen) { toggleDrawer(false); return; }

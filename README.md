@@ -31,11 +31,24 @@ Buildora itself is written in Java + XML and is built with GitHub Actions.
 
 ## Download
 
-Get the latest `Buildora.apk` (v2.1.2 Pioneer) from the **[Releases](../../releases)** page and install it.
+Get the latest `Buildora.apk` (v2.1.3 Catalyst) from the **[Releases](../../releases)** page and install it.
 Android asks you to allow installing from your browser/file manager the first time.
 
 **Requirements:** Android 8.0 (API 26) or newer, an ARM phone, ~300 MB free storage.
 On first launch allow **All files access** — projects are stored in shared storage so you can reach them from any file manager.
+
+## What's new in v2.1.3 "Catalyst"
+
+**Buildora AI, faster and more capable.**
+
+- **Animated thinking and writing** - a pulsing sparkle with a live status line (it shows the file being written, tokens and tokens/second), smooth message animations.
+- **Files shown as paths** - the AI's code appears as a compact file row; tap a path to open the code. Long answers no longer fill the screen.
+- **Works in the background** - requests keep running when you leave the app or lock the screen (foreground service). When it is done you get a notification, and the reply is saved in the chat.
+- **Token counter** in the chat header (left of the pencil icon): tokens used by this chat, details for the last reply, the next request and all chats.
+- **Attachments, reworked** - pick many pictures from the Gallery at once, take a photo, add files of any type, share from other apps into Buildora AI. Pictures and files appear as tiles in the chat box, with preview and remove.
+- **The AI can use what you attach** - it sees your pictures (and PDF pages), reads any text or code file, Word / Excel / PowerPoint / OpenDocument text, archive contents and unknown binary files, and can **import an attached file into your project** (icons, fonts, data).
+- **New menus** - rounded menus with vector icons for the chat **＋** button, the AI 3-dot menus, the chat history and the IDE 3-dot menu.
+- **Several API keys per provider** - add as many keys as you like; when one reaches its limit or is rejected, the next one starts automatically. Per-key status, switch, test and reset.
 
 ## What's new in v2.1.2 "Pioneer"
 

@@ -18,13 +18,16 @@ public final class ModelFetcher {
     private static final String[] NOT_CHAT = {"embed", "whisper", "tts", "dall-e", "moderation", "rerank",
             "stable-diffusion", "imagen", "veo-", "sora", "transcribe", "speech", "flux"};
 
-    public static Map<String, String> headers(AiProvider p) {
+    public static Map<String, String> headers(AiProvider p) { return headers(p, p.activeKey()); }
+
+    public static Map<String, String> headers(AiProvider p, String key) {
         Map<String, String> h = new LinkedHashMap<>();
+        if (key == null) key = "";
         if (p.kind == AiProvider.KIND_ANTHROPIC) {
-            h.put("x-api-key", p.apiKey);
+            h.put("x-api-key", key);
             h.put("anthropic-version", "2023-06-01");
-        } else if (p.apiKey != null && !p.apiKey.isEmpty()) {
-            h.put("Authorization", "Bearer " + p.apiKey);
+        } else if (!key.isEmpty()) {
+            h.put("Authorization", "Bearer " + key);
         }
         if (p.baseUrl != null && p.baseUrl.contains("openrouter.ai")) {
             h.put("HTTP-Referer", "https://buildoraide.vercel.app");

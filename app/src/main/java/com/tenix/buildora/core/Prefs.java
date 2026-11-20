@@ -65,6 +65,11 @@ public final class Prefs {
     public static final String AI_FONT = "ai_font_size";
     public static final String AI_EXTRA = "ai_extra_instructions";
     public static final String AI_AUTOTITLE = "ai_auto_title";
+    public static final String AI_BG = "ai_background";              // keep AI working when the app is closed (foreground service)
+    public static final String AI_NOTIFY = "ai_notify_done";         // notification when a reply finishes in the background
+    public static final String AI_IMG_MAX = "ai_image_max_px";       // longest side of attached pictures
+    public static final String AI_PDF_PAGES = "ai_pdf_pages";        // pages of a PDF sent as pictures
+    public static final String AI_TOKBOX = "ai_token_box";           // show the token counter in the chat header
 
     public static final String AAPT2_CUSTOM = "aapt2_custom";
     public static final String JAR_CUSTOM = "androidjar_custom";

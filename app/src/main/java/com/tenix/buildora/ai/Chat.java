@@ -20,6 +20,7 @@ public final class Chat {
         public boolean error;
         public String backupId = "";        // set after the AI file changes of this message were applied
         public boolean hidden;              // shown only as a small note (auto follow-ups)
+        public int tokIn, tokOut;           // tokens of the request and reply (reported by the provider, else estimated)
 
         public Message() {}
         public Message(String role, String text) { this.role = role; this.text = text; }
@@ -34,7 +35,10 @@ public final class Chat {
     public long created = System.currentTimeMillis();
     public long updated = created;
     public String provider = "", model = "";   // last used model of this chat
+    public long tokensIn, tokensOut;   // running totals of this chat
     public final List<Message> messages = new ArrayList<>();
+
+    public long totalTokens() { return tokensIn + tokensOut; }
 
     public static String newId() { return "c" + Long.toString(System.currentTimeMillis(), 36) + (int) (Math.random() * 1000); }
 
@@ -56,6 +60,8 @@ public final class Chat {
         m.put("updated", (double) updated);
         m.put("provider", provider);
         m.put("model", model);
+        if (tokensIn > 0) m.put("tokIn", (double) tokensIn);
+        if (tokensOut > 0) m.put("tokOut", (double) tokensOut);
         List<Object> ms = new ArrayList<>();
         for (Message x : messages) {
             Map<String, Object> o = new LinkedHashMap<>();
@@ -68,6 +74,8 @@ public final class Chat {
             if (x.error) o.put("error", true);
             if (!x.backupId.isEmpty()) o.put("backup", x.backupId);
             if (x.hidden) o.put("hidden", true);
+            if (x.tokIn > 0) o.put("ti", (double) x.tokIn);
+            if (x.tokOut > 0) o.put("to", (double) x.tokOut);
             ms.add(o);
         }
         m.put("messages", ms);
@@ -88,6 +96,8 @@ public final class Chat {
         c.updated = l(m.get("updated"), c.created);
         c.provider = s(m.get("provider"));
         c.model = s(m.get("model"));
+        c.tokensIn = l(m.get("tokIn"), 0);
+        c.tokensOut = l(m.get("tokOut"), 0);
         List<Object> ms = MiniJson.array(m.get("messages"));
         if (ms != null) for (Object o : ms) {
             Map<String, Object> x = MiniJson.object(o);
@@ -103,6 +113,8 @@ public final class Chat {
             g.error = Boolean.TRUE.equals(x.get("error"));
             g.backupId = s(x.get("backup"));
             g.hidden = Boolean.TRUE.equals(x.get("hidden"));
+            g.tokIn = (int) l(x.get("ti"), 0);
+            g.tokOut = (int) l(x.get("to"), 0);
             c.messages.add(g);
         }
         return c;
