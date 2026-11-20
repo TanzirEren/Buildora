@@ -55,6 +55,13 @@ Buildora AI gets faster to read, smarter with your files, and keeps working when
 - The AI can look at an older attachment again; every chat keeps its attachments
 - Rebuild a design from a screenshot, use your CSV/JSON as data, add fonts and sounds
 
+### 🛠 AI works like an agent on your project
+- **Fixed:** the AI can now delete, move, copy and replace **binary files** (png, jpg, fonts, jars…) - before they were refused as "not editable by AI"
+- New operations: delete a file, a **whole folder** or a **pattern** (`mipmap-*/ic_launcher*.png`) · move/rename files and folders · copy files and folders · `import` and `import-image` (resize / convert) · **`app-icon`**: one line turns an attached picture into launcher icons for every density (round icons too) and removes the old ones
+- Builds fail on "duplicate resource" when `ic_launcher.png` and `ic_launcher.jpg` sit together - Buildora now blocks that before applying and tells the AI to delete first
+- Every operation shows in the changes list, can be unchecked, and **Undo** restores deleted or moved binaries
+- The repeated "change(s) skipped" warning no longer piles up
+
 ### 🎨 New menus & dialogs
 - Rounded menus with a vector icon on every row, grouped with dividers, opening above or below the button
 - Used for the chat **＋** menu, the AI 3-dot menus, the chat history menus, providers, and the IDE 3-dot menu

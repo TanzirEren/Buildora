@@ -8,5 +8,6 @@ public class App extends Application {
         // JGit looks for a home directory (for its config); apps have none.
         System.setProperty("user.home", getFilesDir().getAbsolutePath());
         System.setProperty("user.name", "buildora");
+        com.tenix.buildora.ai.FileOps.converter = new com.tenix.buildora.ai.ImageConvert();
     }
 }

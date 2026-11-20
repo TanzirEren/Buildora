@@ -15,13 +15,15 @@ import java.util.regex.Pattern;
 public final class Protocol {
     private Protocol() {}
 
-    public static final int WRITE = 0, PATCH = 1, DELETE = 2, RENAME = 3, ASSET = 4;
+    public static final int WRITE = 0, PATCH = 1, DELETE = 2, RENAME = 3, ASSET = 4, COPY = 5, IMGCONV = 6, ICON = 7;
 
     public static final class Op {
         public int type;
         public String path;
         public String to;                       // RENAME / ASSET target path
-        public String attachment = "";          // ASSET: name of the chat attachment to copy into the project
+        public String attachment = "";          // ASSET / IMGCONV / ICON: name of the chat attachment to use
+        public int size;                        // IMGCONV: longest side in px (0 = keep)
+        public String format = "";              // IMGCONV: png | jpg | webp (empty = from the target extension)
         public String content = "";             // WRITE
         public final List<String[]> patches = new ArrayList<>();   // PATCH: {search, replace}
         public String lang = "";
@@ -39,6 +41,9 @@ public final class Protocol {
     private static final Pattern FENCE = Pattern.compile("^\\s{0,3}(`{3,}|~{3,})\\s*(.*)$");
     private static final Pattern KV = Pattern.compile("(path|file|delete|rename)\\s*=\\s*[\"']?([^\\s\"']+)[\"']?");
     private static final Pattern PATHLIKE = Pattern.compile("^[\\w.\\-$@+/\\\\]+\\.[A-Za-z0-9]{1,8}$");
+    private static final Pattern COPYLINE = Pattern.compile("(?i)^copy\\s+(.+?)\\s*(?:->|=>)\\s*(\\S.*)$");
+    private static final Pattern IMGLINE = Pattern.compile("(?i)^import-image\\s+(.+?)\\s*(?:->|=>)\\s*(\\S+)((?:\\s+\\w+=\\S+)*)\\s*$");
+    private static final Pattern ICONLINE = Pattern.compile("(?i)^app-icon\\s+(.+?)(?:\\s*(?:->|=>)\\s*(\\S+))?\\s*$");
     private static final Pattern ASSETLINE = Pattern.compile("(?i)^(?:import|use|copy-attachment)\\s+(.+?)\\s*(?:->|=>)\\s*(\\S.*)$");
     private static final Pattern DEP = Pattern.compile("^[\\w.\\-]+:[\\w.\\-]+(:[\\w.\\-+]+)?$");
     private static final Set<String> LANGS = new HashSet<>();
@@ -113,6 +118,31 @@ public final class Protocol {
                 if (t.toLowerCase(Locale.ROOT).startsWith("delete ")) {
                     String p = clean(t.substring(7));
                     if (p != null) { Op o = new Op(); o.type = DELETE; o.path = p; out.ops.add(o); }
+                } else if (IMGLINE.matcher(t).matches()) {
+                    Matcher im = IMGLINE.matcher(t);
+                    im.matches();
+                    String src = attachName(im.group(1)), dst = clean(im.group(2));
+                    if (!src.isEmpty() && dst != null) {
+                        Op o = new Op(); o.type = IMGCONV; o.attachment = src; o.path = dst; o.to = dst;
+                        Matcher kv2 = Pattern.compile("(\\w+)=(\\S+)").matcher(im.group(3));
+                        while (kv2.find()) {
+                            String k = kv2.group(1).toLowerCase(Locale.ROOT), v = kv2.group(2);
+                            if (k.equals("size")) { try { o.size = Math.max(0, Math.min(4096, Integer.parseInt(v))); } catch (NumberFormatException ignored) { } }
+                            else if (k.equals("format")) o.format = v.toLowerCase(Locale.ROOT).replace("jpeg", "jpg");
+                        }
+                        out.ops.add(o);
+                    }
+                } else if (ICONLINE.matcher(t).matches()) {
+                    Matcher ic = ICONLINE.matcher(t);
+                    ic.matches();
+                    String src = attachName(ic.group(1));
+                    String res = ic.group(2) == null ? "app/src/main/res" : clean(ic.group(2));
+                    if (!src.isEmpty() && res != null) { Op o = new Op(); o.type = ICON; o.attachment = src; o.path = res; o.to = res; out.ops.add(o); }
+                } else if (COPYLINE.matcher(t).matches()) {
+                    Matcher cm = COPYLINE.matcher(t);
+                    cm.matches();
+                    String a = clean(cm.group(1)), b = clean(cm.group(2));
+                    if (a != null && b != null) { Op o = new Op(); o.type = COPY; o.path = a; o.to = b; out.ops.add(o); }
                 } else if (ASSETLINE.matcher(t).matches()) {
                     Matcher am = ASSETLINE.matcher(t);
                     am.matches();

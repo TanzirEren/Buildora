@@ -1354,12 +1354,12 @@ public class ChatPanel extends LinearLayout {
             path.setSingleLine(true);
             path.setEllipsize(TextUtils.TruncateAt.MIDDLE);
             col.addView(path);
-            String sub = c.error != null ? "⚠ " + c.error : c.kindLabel() + (!c.asset && (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY) ? "  +" + c.added + " −" + c.removed : c.asset ? "  ·  from your attachment" : "");
+            String sub = c.error != null ? "⚠ " + c.error : c.kindLabel() + (!c.asset && (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY) ? "  +" + c.added + " −" + c.removed : c.kind == FileOps.RENAME && c.to != null ? "  →  " + c.to : "");
             TextView st = UI.label(act, sub, 11, true);
             if (c.error != null) st.setTextColor(UI.color(act, R.attr.bError));
             col.addView(st);
             row.addView(col, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            if (c.ok() && !c.asset && (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY || c.kind == FileOps.DELETE)) {
+            if (c.ok() && !c.asset && !c.binary && (c.kind == FileOps.NEW || c.kind == FileOps.MODIFY || c.kind == FileOps.DELETE)) {
                 TextView d = UI.label(act, "View", 12, false);
                 d.setTextColor(UI.color(act, R.attr.bAccent));
                 d.setPadding(UI.dp(act, 8), UI.dp(act, 6), UI.dp(act, 4), UI.dp(act, 6));
@@ -1453,7 +1453,11 @@ public class ChatPanel extends LinearLayout {
         persist();
         if (!touched.isEmpty()) host.filesChanged(touched);
         renderAll();
-        if (bad > 0) note("⚠ " + bad + " change(s) skipped:" + badTxt);
+        if (bad > 0) {
+            String txt = "⚠ " + bad + " change(s) skipped:" + badTxt;
+            Chat.Message last = chat.messages.isEmpty() ? null : chat.messages.get(chat.messages.size() - 1);
+            if (last == null || !"__note".equals(last.model) || !last.text.equals(txt)) note(txt);     // do not repeat the same warning on every tap
+        }
         if (id.isEmpty() && deps == 0) UI.toast(act, "Nothing to change");
         else UI.toast(act, "Applied " + touched.size() + " file(s)" + (deps > 0 ? " + " + deps + " librar" + (deps == 1 ? "y" : "ies") : ""));
         if (fromFix) { fixMode = false; host.fixFinished(!id.isEmpty() || deps > 0); }

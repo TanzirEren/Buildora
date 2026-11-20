@@ -257,6 +257,86 @@ public class AiLogicTest {
         eq(cols.get(0), "#3F7EB8", "dominant colour"); eq(cols.size(), 2, "transparent ignored, two colours");
         ok(ImagePalette.describe("a.png", 1080, 1920, 5000, cols).contains("portrait"), "palette description orientation");
 
+
+        // ---------- agent operations (v2.1.3 fix): binary delete / move / copy / wildcard / folder / app-icon
+        File pr2 = new File(tmp.toFile(), "icons"); String[] dens = {"mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"};
+        for (String dn : dens) {
+            File md = new File(pr2, "app/src/main/res/mipmap-" + dn); md.mkdirs();
+            Files.write(new File(md, "ic_launcher.png").toPath(), new byte[]{(byte) 0x89, 'P', 'N', 'G', 9});
+            Files.write(new File(md, "ic_launcher_round.png").toPath(), new byte[]{(byte) 0x89, 'P', 'N', 'G', 8});
+        }
+        File anydpi = new File(pr2, "app/src/main/res/mipmap-anydpi-v26"); anydpi.mkdirs();
+        Files.write(new File(anydpi, "ic_launcher.xml").toPath(), "<adaptive-icon/>".getBytes());
+        Files.write(new File(pr2, "app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp").toPath(), new byte[]{'R', 'I', 'F', 'F', 1});
+        Files.createDirectories(new File(pr2, "app/src/main/res/values").toPath());
+        Files.write(new File(pr2, "app/src/main/res/values/strings.xml").toPath(), "<resources/>".getBytes());
+        File att2 = new File(tmp.toFile(), "att2"); att2.mkdirs();
+        Files.write(new File(att2, "mylogo.jpg").toPath(), new byte[]{(byte) 0xff, (byte) 0xd8, 1, 2, 3});
+        // 1) the reported bug: deleting existing binary PNGs one by one
+        List<FileOps.Change> del = FileOps.plan(pr2, Protocol.parse("```buildora-ops\ndelete app/src/main/res/mipmap-mdpi/ic_launcher.png\ndelete app/src/main/res/mipmap-mdpi/ic_launcher_round.png\n```").ops, att2);
+        ok(del.get(0).ok() && del.get(0).kind == FileOps.DELETE && del.get(0).error == null, "binary png can be deleted (was: not editable by AI)");
+        // 2) wildcard + folder delete
+        List<FileOps.Change> wd = FileOps.plan(pr2, Protocol.parse("```buildora-ops\ndelete app/src/main/res/mipmap-*/ic_launcher*.png\n```").ops, att2);
+        eq(wd.size(), 10, "wildcard matches 10 launcher pngs"); boolean allok = true; for (FileOps.Change x : wd) allok &= x.ok(); ok(allok, "all wildcard deletes valid");
+        List<FileOps.Change> fd = FileOps.plan(pr2, Protocol.parse("```buildora-ops\ndelete app/src/main/res/mipmap-hdpi\n```").ops, att2);
+        eq(fd.size(), 2, "folder delete expands to its files");
+        ok(FileOps.plan(pr2, Protocol.parse("```buildora-ops\ndelete app/src/main/res/nothing-*/x.png\n```").ops, att2).get(0).error != null, "empty pattern reports an error");
+        // 3) binary text edits are still refused, with a helpful hint
+        List<FileOps.Change> pb = FileOps.plan(pr2, Protocol.parse("```patch path=app/src/main/res/mipmap-mdpi/ic_launcher.png\n<<<<<<< SEARCH\nx\n=======\ny\n>>>>>>> REPLACE\n```").ops, att2);
+        ok(pb.get(0).error != null && pb.get(0).error.contains("import"), "patching a png is refused with a hint: " + pb.get(0).error);
+        ok(FileOps.plan(pr2, Protocol.parse("```png path=app/new.png\nhello\n```").ops, att2).get(0).error != null, "text cannot create a png");
+        // 4) apply the wildcard delete, then undo restores the binary bytes
+        File bk2 = new File(tmp.toFile(), "bk2");
+        String bid = FileOps.apply(pr2, wd, bk2);
+        ok(!new File(pr2, "app/src/main/res/mipmap-mdpi/ic_launcher.png").exists(), "pngs deleted");
+        ok(new File(pr2, "app/src/main/res/mipmap-mdpi").exists() == false, "empty folder pruned");
+        FileOps.undo(pr2, bk2, bid);
+        eq(Files.readAllBytes(new File(pr2, "app/src/main/res/mipmap-hdpi/ic_launcher.png").toPath()).length, 5, "undo restores binary file");
+        // 5) move + copy of binary files and folders
+        List<FileOps.Change> mv = FileOps.plan(pr2, Protocol.parse("```buildora-ops\nmove app/src/main/res/mipmap-hdpi/ic_launcher.png -> app/src/main/assets/icon_copy.png\nmove app/src/main/res/mipmap-xhdpi -> app/backup/xhdpi\ncopy app/src/main/res/mipmap-xxhdpi -> app/copies/xxhdpi\n```").ops, att2);
+        boolean mvok = true; for (FileOps.Change x : mv) mvok &= x.ok(); ok(mvok, "move/copy of binaries and folders valid (" + mv.size() + " changes)");
+        String mid = FileOps.apply(pr2, mv, new File(tmp.toFile(), "bk3"));
+        eq(Files.readAllBytes(new File(pr2, "app/src/main/assets/icon_copy.png").toPath()).length, 5, "binary moved byte for byte");
+        ok(!new File(pr2, "app/src/main/res/mipmap-hdpi/ic_launcher.png").exists(), "move removed the source");
+        ok(new File(pr2, "app/backup/xhdpi/ic_launcher_round.png").isFile() && !new File(pr2, "app/src/main/res/mipmap-xhdpi").exists(), "folder moved");
+        ok(new File(pr2, "app/copies/xxhdpi/ic_launcher.png").isFile() && new File(pr2, "app/src/main/res/mipmap-xxhdpi/ic_launcher.png").isFile(), "folder copied, source kept");
+        FileOps.undo(pr2, new File(tmp.toFile(), "bk3"), mid);
+        ok(new File(pr2, "app/src/main/res/mipmap-xhdpi/ic_launcher.png").isFile() && !new File(pr2, "app/backup").exists(), "undo of moves/copies");
+        // 6) app-icon with a converter: all densities, old icons in any format removed
+        final List<String> conv = new ArrayList<>();
+        FileOps.converter = (src, dest, size, format, round) -> { conv.add(dest.getName() + ":" + size + ":" + round); Files.write(dest.toPath(), ("CONV" + size).getBytes()); };
+        List<FileOps.Change> ic = FileOps.plan(pr2, Protocol.parse("```buildora-ops\napp-icon mylogo.jpg\n```").ops, att2);
+        int icw = 0, icd = 0; for (FileOps.Change x : ic) { if (x.convSize > 0 && x.ok()) icw++; if (x.kind == FileOps.DELETE && x.ok()) icd++; }
+        eq(icw, 10, "app-icon writes 10 icons (5 densities x normal+round)");
+        ok(icd >= 2, "app-icon removes old webp + adaptive xml (" + icd + ")");
+        String iid = FileOps.apply(pr2, ic, new File(tmp.toFile(), "bk4"));
+        ok(!new File(pr2, "app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp").exists(), "old webp icon removed (no duplicate resource)");
+        ok(!new File(anydpi, "ic_launcher.xml").exists(), "adaptive icon xml removed");
+        eq(new String(Files.readAllBytes(new File(pr2, "app/src/main/res/mipmap-xxxhdpi/ic_launcher.png").toPath())), "CONV192", "xxxhdpi icon is 192 px");
+        ok(conv.contains("ic_launcher_round.png:48:true"), "round icon is converted with a circle mask");
+        FileOps.undo(pr2, new File(tmp.toFile(), "bk4"), iid);
+        ok(new File(pr2, "app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp").isFile() && new File(anydpi, "ic_launcher.xml").isFile(), "undo restores old icons");
+        // 7) import-image parsing + plan
+        Protocol.Parsed ip = Protocol.parse("```buildora-ops\nimport-image mylogo.jpg -> app/src/main/res/drawable/logo.png size=256 format=png\napp-icon mylogo.jpg -> app/src/main/res\n```");
+        eq(ip.ops.get(0).type, Protocol.IMGCONV, "import-image parsed"); eq(ip.ops.get(0).size, 256, "size parsed"); eq(ip.ops.get(0).format, "png", "format parsed"); eq(ip.ops.get(1).type, Protocol.ICON, "app-icon parsed");
+        List<FileOps.Change> ii = FileOps.plan(pr2, ip.ops.subList(0, 1), att2);
+        ok(ii.get(0).ok() && ii.get(0).convSize == 256 && "png".equals(ii.get(0).convFormat), "import-image planned with conversion");
+        FileOps.apply(pr2, ii, new File(tmp.toFile(), "bk5"));
+        eq(new String(Files.readAllBytes(new File(pr2, "app/src/main/res/drawable/logo.png").toPath())), "CONV256", "import-image resized");
+        FileOps.converter = null;
+        ok(FileOps.plan(pr2, Protocol.parse("```buildora-ops\napp-icon mylogo.jpg\n```").ops, att2).get(0).error != null, "app-icon without converter is a clear error");
+        // 7b) duplicate resource guard (the jpg-next-to-png build failure)
+        File att3 = att2;
+        List<FileOps.Change> dup = FileOps.plan(pr2, Protocol.parse("```buildora-ops\nimport mylogo.jpg -> app/src/main/res/mipmap-hdpi/ic_launcher.jpg\n```").ops, att3);
+        ok(dup.get(0).error != null && dup.get(0).error.contains("Duplicate resource"), "jpg next to png is blocked: " + dup.get(0).error);
+        List<FileOps.Change> ordered = FileOps.plan(pr2, Protocol.parse("```buildora-ops\ndelete app/src/main/res/mipmap-hdpi/ic_launcher.png\nimport mylogo.jpg -> app/src/main/res/mipmap-hdpi/ic_launcher.jpg\n```").ops, att3);
+        ok(ordered.get(0).ok() && ordered.get(1).ok(), "delete first, then import works");
+        // 8) text edits unaffected: delete + write + rename of text files still work
+        Files.write(new File(pr2, "app/A.java").toPath(), "class A {}".getBytes());
+        List<FileOps.Change> tx = FileOps.plan(pr2, Protocol.parse("```buildora-ops\nrename app/A.java -> app/B.java\ncopy app/B.java -> app/C.java\n```").ops, att2);
+        boolean txok = true; for (FileOps.Change x : tx) txok &= x.ok(); ok(txok, "text rename + copy of the renamed file in one reply");
+        FileOps.apply(pr2, tx, new File(tmp.toFile(), "bk6"));
+        ok(new String(Files.readAllBytes(new File(pr2, "app/C.java").toPath())).equals("class A {}") && !new File(pr2, "app/A.java").exists(), "rename+copy results");
         // ---------- misc
         eq(Ai_compact(950), "950", "compact small"); 
         System.out.println(pass + " passed, " + fail + " failed");
