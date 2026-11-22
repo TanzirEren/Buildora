@@ -182,6 +182,7 @@ final class BuildRunner {
                 .append("\nVariant ").append(r.variant)
                 .append("  •  built in ").append(String.format(Locale.US, "%.1f", r.millis / 1000.0)).append(" s");
         if (r.mapping != null) info.append("\nR8 mapping: ").append(r.mapping.getPath());
+        info.append(SignDialog.resultText(r));
         info.append("\n\n").append(out.getAbsolutePath());
         TextView t = UI.label(act, info.toString(), 13, true);
         t.setTextIsSelectable(true);
@@ -192,6 +193,23 @@ final class BuildRunner {
         TextView share = UI.button(act, "Share", false);
         TextView close = UI.button(act, "Close", false);
         box.addView(download);
+        TextView signBtn = UI.button(act, r.aab == null ? (r.keyDebug ? "Sign APK" : "Re-sign APK") : "Back up key", false);
+        box.addView(signBtn);
+        final String keyName = r.keyName;
+        if (r.aab != null) {
+            TextView copyKey = UI.button(act, "Copy key details", false);
+            box.addView(copyKey);
+            copyKey.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { SignDialog.copyDetails(act, keyName); } });
+        }
+        signBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (r.aab == null) { d[0].dismiss(); SignDialog.show(act, p, false); }
+                else {
+                    File f = SignDialog.backupFile(act, keyName);
+                    UI.toastLong(act, f != null ? "Key saved to " + f.getAbsolutePath() : "Debug key cannot be backed up");
+                }
+            }
+        });
         if (r.aab == null) box.addView(install);
         if (r.aab == null) {
             TextView open = UI.button(act, "Open app", false);

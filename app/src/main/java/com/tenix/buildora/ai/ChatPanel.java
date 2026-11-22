@@ -106,7 +106,10 @@ public class ChatPanel extends LinearLayout {
     private final List<Att> atts = new ArrayList<>();
     private String quote = "";
     private boolean busy, stopped, fixMode;
-    private int fixRound, readRounds;
+    private int fixRound, readRounds, agentRounds;
+    private volatile AgentTools agent;
+    private volatile boolean agentStop;
+    private boolean agentFollowUp;
     private final List<String> forcePriority = new ArrayList<>();
     private final Map<Chat.Message, List<FileOps.Change>> plans = new IdentityHashMap<>();
 
@@ -962,7 +965,7 @@ public class ChatPanel extends LinearLayout {
     // ------------------------------------------------------------------ sending
 
     private void onSendClicked() {
-        if (busy) { stopped = true; if (job != null) job.stop(); if (think != null) think.setStopping(); return; }
+        if (busy) { stopped = true; if (job != null) job.stop(); AgentTools ag = agent; if (ag != null) { agentStop = true; ag.cancel(); } if (think != null) think.setStopping(); return; }
         for (Att a : atts) if (a.loading) { UI.toast(act, "Still reading attachments…"); return; }
         String t = input.getText().toString().trim();
         if (t.isEmpty() && atts.isEmpty()) return;
@@ -987,6 +990,7 @@ public class ChatPanel extends LinearLayout {
             updateModelChip();
         }
         if (host.ideMode()) host.saveAll();
+        agentRounds = 0; agentFollowUp = false; agentStop = false;
         Chat.Message um = new Chat.Message("user", text);
         um.quote = quote;
         um.hidden = hidden;
@@ -1022,16 +1026,18 @@ public class ChatPanel extends LinearLayout {
     private List<ChatClient.Msg> buildRequest(Chat.Message lastUser, List<Att> sendAtts) {
         final File root = root();
         List<ChatClient.Msg> out = new ArrayList<>();
-        out.add(new ChatClient.Msg("system", Prompts.system(root == null, Prefs.str(act, Prefs.AI_EXTRA, ""))));
+        out.add(new ChatClient.Msg("system", Prompts.system(root == null, Prefs.str(act, Prefs.AI_EXTRA, ""), root != null && Prefs.bool(act, Prefs.AI_AGENT, true))));
 
         // history (newest last), trimmed to a budget
         List<ChatClient.Msg> hist = new ArrayList<>();
         int budget = 36000, used = 0;
         boolean seenAssistant = false;
+        int toolSeen = 0;
         for (int i = chat.messages.size() - 2; i >= 0; i--) {
             Chat.Message m = chat.messages.get(i);
             if (m.model.equals("__note") || m.error) continue;
             String t = m.text;
+            if (m.role.equals("user") && t.contains("<tool_results>") && ++toolSeen > 2) t = t.substring(0, t.indexOf("<tool_results>")) + "[older tool results omitted]";
             if (m.role.equals("assistant")) {
                 if (seenAssistant) t = FILE_BLOCK.matcher(t).replaceAll("[wrote file $1]");
                 seenAssistant = true;
@@ -1056,7 +1062,7 @@ public class ChatPanel extends LinearLayout {
             int min = 21, tgt = 34;
             try { Project p = Project.load(root); name = p.name; pkg = p.packageName; min = p.minSdk; tgt = p.targetSdk; } catch (Exception ignored) { }
             sb.append("Current project snapshot (files are up to date):\n")
-                    .append(ProjectContext.build(root, name, pkg, min, tgt, priority, Ai.contextBudget(act))).append("\n\n");
+                    .append(ProjectContext.build(root, name, pkg, min, tgt, priority, agentFollowUp ? Math.min(6000, Ai.contextBudget(act)) : Ai.contextBudget(act))).append("\n\n");
             if (cur != null) sb.append("The user has this file open in the editor: ").append(cur).append("\n");
             String sel = host.selection();
             if (!sel.isEmpty()) sb.append("Selected code:\n```\n").append(Prompts.cut(sel, 6000)).append("\n```\n");
@@ -1191,6 +1197,8 @@ public class ChatPanel extends LinearLayout {
     private void handleReply(Chat.Message am) {
         Protocol.Parsed pr = Protocol.parse(am.text);
         File root = root();
+        if (root != null && pr.hasTools() && Prefs.bool(act, Prefs.AI_AGENT, true)) { runAgentRound(am, pr, root); return; }
+        agentRounds = 0;
         if (pr.ops.isEmpty() && !pr.reads.isEmpty() && readRounds < 3) {
             final List<File> again = new ArrayList<>();
             boolean files = false;
@@ -1234,6 +1242,198 @@ public class ChatPanel extends LinearLayout {
             fixMode = false;
             host.fixFinished(false);
         }
+    }
+
+    // ------------------------------------------------------------------ agent mode (v2.1.4)
+
+    private void runAgentRound(final Chat.Message am, final Protocol.Parsed pr, final File root) {
+        int max = Ai.agentSteps(act);
+        if (agentRounds >= max) {
+            agentRounds = 0;
+            note("⚠ The agent stopped after " + max + " steps. Say \"continue\" to let it go on, or raise the limit in Settings.");
+            if (fixMode) { fixMode = false; host.fixFinished(false); }
+            return;
+        }
+        agentRounds++;
+        agentStop = false;
+        busy = true;
+        updateSendIcon();
+        showLive();
+        StringBuilder names = new StringBuilder();
+        for (Protocol.Tool t : pr.tools) { if (names.length() > 0) names.append(", "); names.append(t.name); }
+        if (think != null) think.setStatus("Agent step " + agentRounds + "/" + max + " · " + names);
+        host.saveAll();
+        AgentTools.Config cfg = new AgentTools.Config();
+        cfg.shellMode = Prefs.num(act, Prefs.AI_SHELL, 0);
+        cfg.web = Prefs.bool(act, Prefs.AI_WEB, true);
+        cfg.androidJar = com.tenix.buildora.build.Toolchain.androidJar(act);
+        cfg.home = new File(act.getFilesDir(), "agent_home");
+        final AgentTools ag = new AgentTools(root, Ai.backups(root), agentHost(root), cfg);
+        agent = ag;
+        final File attach = Ai.attachDir(act, chat.id);
+        new Thread(() -> {
+            AiApply.Outcome o = null;
+            if (pr.any()) o = AiApply.applyReply(root, attach, am.text);
+            final List<AgentTools.Result> rs = new ArrayList<>();
+            for (Protocol.Tool t : pr.tools) {
+                if (agentStop) break;
+                final String label = t.name;
+                h.post(() -> { if (think != null) think.setStatus("Running " + label + "…"); });
+                rs.add(ag.run(t));
+            }
+            final AiApply.Outcome fo = o;
+            h.post(() -> afterAgent(am, fo, rs));
+        }, "ai-agent").start();
+    }
+
+    private void afterAgent(Chat.Message am, AiApply.Outcome o, List<AgentTools.Result> rs) {
+        agent = null;
+        busy = false;
+        List<String> touched = new ArrayList<>();
+        StringBuilder note = new StringBuilder("🔧 Agent step " + agentRounds);
+        String applyErr = null;
+        if (o != null) {
+            if (o.error != null) applyErr = o.error;
+            else {
+                if (!o.backupId.isEmpty()) am.backupId = o.backupId;
+                touched.addAll(o.touched);
+                if (!o.touched.isEmpty()) note.append("\n✓ wrote ").append(o.touched.size()).append(" file").append(o.touched.size() == 1 ? "" : "s");
+                if (o.deps > 0) note.append("\n✓ added ").append(o.deps).append(" librar").append(o.deps == 1 ? "y" : "ies");
+            }
+            if (applyErr != null) note.append("\n✗ could not apply file changes: ").append(applyErr);
+        }
+        for (AgentTools.Result r : rs) { note.append('\n').append(r.summary()); touched.addAll(r.touched); }
+        if (!touched.isEmpty()) host.filesChanged(touched);
+        persist();
+        note(note.toString());
+        if (agentStop) {
+            agentStop = false;
+            agentRounds = 0;
+            updateSendIcon();
+            if (fixMode) { fixMode = false; host.fixFinished(false); }
+            return;
+        }
+        StringBuilder msg = new StringBuilder("Tool results (" + rs.size() + " call" + (rs.size() == 1 ? "" : "s") + ")\n");
+        if (applyErr != null) msg.append("Your file changes could not be applied: ").append(applyErr).append('\n');
+        msg.append(AgentTools.toModelText(rs));
+        msg.append("Continue the task. If everything is done, answer with a short summary and no buildora-tool blocks.");
+        final Chat.Message n = new Chat.Message("user", msg.toString());
+        n.hidden = true;
+        chat.messages.add(n);
+        persist();
+        renderAll();
+        agentFollowUp = true;
+        generate(n, new ArrayList<Att>());
+    }
+
+    private boolean askBlocking(final String title, final String detail) {
+        final boolean[] ans = {false};
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        h.post(() -> {
+            try {
+                UI.dialog(act).setTitle(title).setMessage(Prompts.cut(detail, 1400)).setCancelable(false)
+                        .setPositiveButton("Allow", (d, w) -> { ans[0] = true; latch.countDown(); })
+                        .setNegativeButton("Deny", (d, w) -> latch.countDown()).show();
+            } catch (RuntimeException e) { latch.countDown(); }
+        });
+        try { latch.await(5, java.util.concurrent.TimeUnit.MINUTES); } catch (InterruptedException ignored) { }
+        return ans[0];
+    }
+
+    private AgentTools.Host agentHost(final File root) {
+        return new AgentTools.Host() {
+            @Override public boolean approve(String title, String detail) { return askBlocking(title, detail); }
+
+            @Override public String build(boolean release, boolean aab) {
+                final com.tenix.buildora.BuildManager bm = com.tenix.buildora.BuildManager.get();
+                if (bm.isRunning()) return "ERROR: another build is already running. Try again in a moment.";
+                Project p = Project.load(root);
+                com.tenix.buildora.build.BuildEngine.Options opt = new com.tenix.buildora.build.BuildEngine.Options();
+                opt.variant = release ? p.releaseVariant() : p.activeVariant();
+                opt.aab = aab;
+                if (release) {
+                    try { opt.signKeyId = com.tenix.buildora.build.Keystores.forRelease(act, p.name, opt.variant.signingKey).id; }
+                    catch (Exception e) { return "ERROR: could not prepare the signing key: " + e.getMessage(); }
+                }
+                final com.tenix.buildora.build.BuildEngine.Result[] res = new com.tenix.buildora.build.BuildEngine.Result[1];
+                final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+                com.tenix.buildora.BuildManager.Listener l = new com.tenix.buildora.BuildManager.Listener() {
+                    @Override public void onStage(String stage, int percent) { }
+                    @Override public void onLog(String line) { }
+                    @Override public void onFinished(com.tenix.buildora.build.BuildEngine.Result r) { res[0] = r; latch.countDown(); }
+                };
+                bm.attach(l);
+                try {
+                    if (!bm.start(act, p, opt)) return "ERROR: could not start the build service.";
+                    boolean done = false;
+                    try { while (!done && !agentStop) done = latch.await(1, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
+                    if (!done) { bm.cancel(); return "ERROR: the build was stopped."; }
+                } finally { bm.detach(l); }
+                com.tenix.buildora.build.BuildEngine.Result r = res[0];
+                if (r == null) return "ERROR: the build gave no result.";
+                if (r.success) {
+                    File out = r.output();
+                    return "BUILD SUCCESSFUL  variant " + r.variant + ", " + (out == null ? "" : FileUtil.human(out.length())) + ", " + (r.millis / 1000) + " s"
+                            + (out == null ? "" : "\nOutput: " + FileUtil.relPath(root, out))
+                            + (r.keyName.isEmpty() ? "" : "\nSigned with: " + r.keyName + (r.keyDebug ? " (debug key)" : ""));
+                }
+                if (r.cancelled) return "ERROR: the build was cancelled.";
+                StringBuilder sb = new StringBuilder("BUILD FAILED\n");
+                List<String[]> diags = new ArrayList<>();
+                int n = 0;
+                for (com.tenix.buildora.build.BuildEngine.Diag d : r.diags) {
+                    if (!d.error) continue;
+                    diags.add(new String[]{d.file, String.valueOf(d.line), d.message});
+                    if (d.file != null && n++ < 25) sb.append(FileUtil.relPath(root, new File(d.file))).append(':').append(d.line).append("  ").append(d.message).append('\n');
+                }
+                String snip = diags.isEmpty() ? "" : ProjectContext.errorSnippets(root, diags);
+                if (!snip.isEmpty()) sb.append("\nCode around the errors:\n").append(Prompts.cut(snip, 3500));
+                if (n == 0) sb.append(Prompts.cut(r.errorText, 3500));
+                return sb.toString();
+            }
+
+            @Override public String crashReports(String pkg) {
+                String want = pkg;
+                if (want == null || want.isEmpty()) { try { want = Project.load(root).activeVariant().applicationId; } catch (Exception ignored) { want = ""; } }
+                StringBuilder sb = new StringBuilder();
+                int n = 0;
+                for (com.tenix.buildora.core.CrashStore.Crash c : com.tenix.buildora.core.CrashStore.list(act)) {
+                    if (!want.isEmpty() && !c.pkg.equals(want)) continue;
+                    if (n++ >= 3) break;
+                    sb.append("Crash of ").append(c.pkg).append(" at ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date(c.time)))
+                            .append(" (thread ").append(c.thread).append(")\n").append(Prompts.cut(c.trace, 2200)).append("\n\n");
+                }
+                try {
+                    Process pr = new ProcessBuilder("logcat", "-d", "-t", "400", "*:W").redirectErrorStream(true).start();
+                    java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(pr.getInputStream()));
+                    String ln;
+                    int k = 0;
+                    StringBuilder lc = new StringBuilder();
+                    while ((ln = br.readLine()) != null && k < 60) if (ln.contains("AndroidRuntime") || (!want.isEmpty() && ln.contains(want))) { lc.append(ln).append('\n'); k++; }
+                    if (lc.length() > 0) sb.append("Logcat (warnings and errors):\n").append(Prompts.cut(lc.toString(), 3000));
+                } catch (Exception ignored) { }
+                if (sb.length() == 0) return "No crash reports yet. Build a debug version, install it and run it (crashes of debug builds are reported to Buildora automatically).";
+                return sb.toString();
+            }
+
+            @Override public String git(String op, String arg) {
+                try {
+                    if (!com.tenix.buildora.build.GitHelper.isRepo(root)) return "ERROR: this project is not a Git repository.";
+                    if (op.equals("status")) return com.tenix.buildora.build.GitHelper.status(root);
+                    return com.tenix.buildora.build.GitHelper.commit(root, arg.isEmpty() ? "Update from Buildora AI" : arg, Prefs.str(act, Prefs.GIT_NAME, ""), Prefs.str(act, Prefs.GIT_EMAIL, ""));
+                } catch (Exception e) { return "ERROR: " + e.getMessage(); }
+            }
+
+            @Override public String install() {
+                Project p = Project.load(root);
+                File apk = p.activeVariant().apkFile(p);
+                if (!apk.isFile()) { File rel = p.releaseVariant().apkFile(p); if (rel.isFile()) apk = rel; }
+                if (!apk.isFile()) return "ERROR: no built APK found. Run build_project first.";
+                final File f = apk;
+                h.post(() -> com.tenix.buildora.core.Installer.install(act, f));
+                return "The Android installer was opened for " + f.getName() + ". The user must confirm the installation.";
+            }
+        };
     }
 
     // ------------------------------------------------------------------ public helpers for hosts

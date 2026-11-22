@@ -319,6 +319,7 @@ public final class MdRender {
                 case "deps": title = "libraries"; break;
                 case "read": title = "files the AI wants to read"; break;
                 case "project": title = "new project"; break;
+                case "tool": case "tools": title = "agent tool: " + code.trim().split("\n")[0]; break;
                 default: break;
             }
         }

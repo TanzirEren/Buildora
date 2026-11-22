@@ -1,0 +1,5 @@
+
+# signing material: never commit
+*.jks
+*.p12
+*.keystore

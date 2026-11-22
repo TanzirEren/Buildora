@@ -101,4 +101,10 @@ public final class Ai {
         if (p == null) return "";
         return p.name + " · " + modelId;
     }
+
+    private static final int[] STEPS = {4, 8, 12, 20, 30};
+    public static int agentSteps(android.content.Context c) {
+        int i = Prefs.num(c, Prefs.AI_AGENT_STEPS, 2);
+        return STEPS[Math.max(0, Math.min(STEPS.length - 1, i))];
+    }
 }

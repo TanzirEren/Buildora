@@ -33,6 +33,33 @@ public final class Prompts {
             + "- To look at an older attachment again, reply ONLY with a buildora-read block containing `attach:<name>`.\n"
             + "- When the user gives a design screenshot, reproduce it as closely as you can with Android XML layouts and the colours listed.\n";
 
+
+    public static final String AGENT =
+            "\n## Agent tools (you can act, not only write)\n"
+            + "You can call tools with a fenced block whose info string is buildora-tool. One call per block (read-only tools may share a block, one per line). "
+            + "Buildora runs the tools, then sends you the results and you continue. Stop calling tools when the task is done and give a short summary. "
+            + "File blocks, patch blocks and buildora-ops in the same reply are applied automatically before the tools run.\n"
+            + "Format: first line `tool_name argument`; for write tools the body follows on the next lines, for example:\n"
+            + "```buildora-tool\nwrite_file app/src/main/java/com/x/Util.java\n<file content>\n```\n"
+            + "Tools:\n"
+            + "1 list_files [path] - folder tree. 2 read_file <path> [from-to] - numbered lines. 3 search_text <regex or text> [in <path>]. 4 find_files <glob>. 5 file_info <path>. "
+            + "6 find_usages <symbol>. 7 list_resources [type]. 8 project_info. 9 class_outline <file.java> - methods and fields with line numbers. 10 project_stats.\n"
+            + "11 write_file <path> (body = whole file). 12 append_file <path> (body). 13 replace_lines <path> <from>-<to> (body = new lines, empty body deletes them). "
+            + "14 insert_lines <path> <after line> (body). 15 replace_all <path or folder> <old> => <new>. 16 make_dir <path>. 17 delete_path <path or pattern>. "
+            + "18 move_path <from> -> <to>. 19 copy_path <from> -> <to>.\n"
+            + "20 rename_class <Old> -> <New> - renames the class, its file, every Java reference, layout tags and manifest entries. "
+            + "21 rename_resource <type>/<old> -> <new> - layouts, ids, strings, drawables across Java, XML and files.\n"
+            + "22 diagnostics [path] - fast static check without building: XML syntax, brackets, imports, package/file names, undefined R.* and @resources, manifest components and permissions. "
+            + "23 build_project [debug|release] [aab] - real build, returns the compiler errors with code lines (or success). 24 read_crash_logs [package] - crash stack traces and logcat of the built app. "
+            + "25 install_app - installs the last built APK.\n"
+            + "26 run_shell <command> (timeout=N prefix allowed; runs in the project folder; the user may be asked). 27 run_python (body = code; only if the phone has Python). "
+            + "28 search_web <query>. 29 fetch_url <https url> - page as text.\n"
+            + "30 add_dependency <group:artifact:version>. 31 remove_dependency <group:artifact>. 32 set_version name=1.2 code=5. 33 git_status. 34 git_commit <message>. "
+            + "35 undo_last - reverts your most recent change. Also plan (body = checklist) to write down your steps for a big task.\n"
+            + "Working method: (1) look before you edit: list_files / read_file / search_text; (2) make the change; (3) run diagnostics, then build_project; (4) if the build fails read the errors, fix the cause and build again, until it succeeds (never repeat the same failing fix); "
+            + "(5) for a runtime crash use read_crash_logs, find the line, fix it. Prefer rename_class / rename_resource over hand edits for renames. Use search_web only for facts you cannot know (new APIs, error messages). "
+            + "Never claim the app works unless build_project succeeded. Keep each round small: do not read files you do not need.\n";
+
     public static final String PROJECT_HEADER =
             "\n## Creating a new app\n"
             + "When the user asks you to build a new app and no project exists yet, first output:\n"
@@ -43,8 +70,10 @@ public final class Prompts {
             + "keep using those names, or rewrite the files that define them. Template Java files and layouts are removed when you write your own.\n"
             + "Use the framework theme (android:Theme.Material.Light.NoActionBar or similar) - AppCompat/Material libraries are not available unless you add them in a buildora-deps block.\n";
 
-    public static String system(boolean newProject, String extra) {
-        String s = SYSTEM + (newProject ? PROJECT_HEADER : "");
+    public static String system(boolean newProject, String extra) { return system(newProject, extra, false); }
+
+    public static String system(boolean newProject, String extra, boolean agent) {
+        String s = SYSTEM + (agent && !newProject ? AGENT : "") + (newProject ? PROJECT_HEADER : "");
         if (extra != null && !extra.trim().isEmpty()) s += "\n## User's extra instructions\n" + extra.trim() + "\n";
         return s;
     }

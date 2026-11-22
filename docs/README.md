@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Platform" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white">
   <img alt="Language" src="https://img.shields.io/badge/projects-Java%20%2B%20XML-3F7EB8">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.1.3%20Catalyst-7DB1E0">
+  <img alt="Version" src="https://img.shields.io/badge/version-2.1.4%20Fusion-7DB1E0">
   <img alt="Build" src="https://img.shields.io/badge/build-100%25%20on--device-E0E1A6?labelColor=1B1C21">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>

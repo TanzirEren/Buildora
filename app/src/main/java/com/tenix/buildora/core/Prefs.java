@@ -62,6 +62,10 @@ public final class Prefs {
     public static final String AI_AUTOAPPLY = "ai_auto_apply";
     public static final String AI_AUTOBUILD = "ai_auto_build_fix";
     public static final String AI_FIXLOOPS = "ai_fix_rounds";
+    public static final String AI_AGENT = "ai_agent_mode";           // AI may call tools and apply its changes by itself
+    public static final String AI_AGENT_STEPS = "ai_agent_steps";    // choice index into Ai.agentSteps
+    public static final String AI_SHELL = "ai_shell_mode";           // 0 ask each time, 1 always allow, 2 never (shell + python)
+    public static final String AI_WEB = "ai_web_access";             // search_web / fetch_url
     public static final String AI_FONT = "ai_font_size";
     public static final String AI_EXTRA = "ai_extra_instructions";
     public static final String AI_AUTOTITLE = "ai_auto_title";

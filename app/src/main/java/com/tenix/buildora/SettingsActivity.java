@@ -87,6 +87,10 @@ public class SettingsActivity extends BaseActivity {
         switchRow("Auto-apply AI file changes", "Write the AI's files without asking (Undo is always available)", Prefs.AI_AUTOAPPLY, false, null);
         switchRow("Auto-build after AI Fix", "Run the build again after a fix and retry if it still fails", Prefs.AI_AUTOBUILD, true, null);
         choiceRow("Max auto-fix rounds", Prefs.AI_FIXLOOPS, new String[]{"0", "1", "2", "3", "4", "5"}, 3, null);
+        switchRow("Agent mode", "The AI can use 35 tools (read, search, edit, build, diagnostics, shell, web) and apply its own changes. Undo stays available", Prefs.AI_AGENT, true, null);
+        choiceRow("Max agent steps per request", Prefs.AI_AGENT_STEPS, new String[]{"4 steps", "8 steps", "12 steps", "20 steps", "30 steps"}, 2, null);
+        choiceRow("AI shell commands and Python", Prefs.AI_SHELL, new String[]{"Ask me each time", "Always allow", "Never"}, 0, null);
+        switchRow("AI web access", "Lets the AI search the web and read pages (search_web, fetch_url)", Prefs.AI_WEB, true, null);
         switchRow("Name chats automatically", "Use the first message as the chat title", Prefs.AI_AUTOTITLE, true, null);
         sliderRow("Chat text size", Prefs.AI_FONT, 11, 18, 13, " sp");
         textRow("Custom instructions", Prefs.AI_EXTRA, "e.g. always comment in English, use ArrayList not arrays", false);
@@ -376,7 +380,7 @@ public class SettingsActivity extends BaseActivity {
         actionRow("Storage permission", Perm.hasStorage(this) ? "Granted" : "Not granted - tap to allow", () -> Perm.requestStorage(this, 21));
 
         section("About");
-        actionRow("Buildora 2.1.3 Catalyst", "Developer Tanzir", () -> { });
+        actionRow("Buildora 2.1.4 Fusion", "Developer Tanzir", () -> { });
         contactIcons();
 
         scroll.post(() -> scroll.scrollTo(0, sy));

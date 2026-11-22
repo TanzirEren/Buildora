@@ -275,6 +275,7 @@ public class IdeActivity extends BaseActivity {
                 .add(10, R.drawable.mi_package, "Libraries")
                 .add(11, R.drawable.mi_scan, "Detect libraries")
                 .add(12, R.drawable.mi_shield, "ProGuard rules")
+                .add(26, R.drawable.mi_key, "Sign APK (release)")
                 .add(13, R.drawable.mi_archive, "Export AAB (bundle)")
                 .add(14, R.drawable.mi_terminal, "Logcat")
                 .divider().header("Project")
@@ -306,7 +307,8 @@ public class IdeActivity extends BaseActivity {
                 case 10: openScreen(LibrariesActivity.class); break;
                 case 11: saveAll(false); LibraryDetectDialog.show(this, project, null); break;
                 case 12: openScreen(ProguardActivity.class); break;
-                case 13: runBuild(true); break;
+                case 13: saveAll(false); SignDialog.show(this, project, true); break;
+                case 26: saveAll(false); SignDialog.show(this, project, false); break;
                 case 14: openLogcat(); break;
                 case 15: projectSettings(); break;
                 case 16: changeIcon(); break;
@@ -1172,6 +1174,39 @@ public class IdeActivity extends BaseActivity {
         opt.aab = aab;
         if (aab && opt.variant.debuggable) UI.toastLong(this, "Tip: export the bundle from a release variant (Build variants).");
         BuildRunner.start(this, project, opt);
+    }
+
+    /** Sign APK / Export AAB: release variant, real key (generated when missing), optional R8 and version bump. */
+    void runSignedBuild(final boolean aab, final String keyChoice, final boolean r8, final boolean bump, final boolean backup) {
+        if (BuildManager.get().isRunning()) { BuildRunner.attach(this, project); return; }
+        saveAll(false);
+        hideKeyboard();
+        final Project p0 = Project.load(root);
+        UI.toast(this, "Preparing signing key…");
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String err = null;
+                com.tenix.buildora.build.Keystores.Entry key = null;
+                try {
+                    key = SignDialog.resolveKey(IdeActivity.this, p0, p0.releaseVariant(), keyChoice, backup);
+                    if (bump) { Project q = Project.load(root); q.versionCode++; q.save(); }
+                } catch (Throwable e) { err = String.valueOf(e.getMessage()); }
+                final String ferr = err;
+                final String kid = key == null ? "" : key.id;
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (ferr != null) { UI.toastLong(IdeActivity.this, "Could not prepare the key: " + ferr); return; }
+                        project = Project.load(root);
+                        BuildEngine.Options opt = new BuildEngine.Options();
+                        opt.variant = project.releaseVariant();
+                        opt.aab = aab;
+                        opt.signKeyId = kid;
+                        opt.forceMinify = r8;
+                        BuildRunner.start(IdeActivity.this, project, opt);
+                    }
+                });
+            }
+        }, "sign-prepare").start();
     }
 
     /** Called when a build (possibly finished while the app was in the background) delivers its result. */

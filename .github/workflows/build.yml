@@ -3,7 +3,11 @@ name: Build Buildora APK
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write      # lets the tag build attach the APK to a GitHub Release
 
 jobs:
   build:
@@ -46,13 +50,50 @@ jobs:
         with:
           gradle-version: '8.4'
 
-      - name: Build debug APK
+      - name: Check signing secrets
+        id: sign
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/buildora-release.p12"
+            test -s "$RUNNER_TEMP/buildora-release.p12"
+            # fail early (before the long build) when the password or alias is wrong
+            keytool -list -keystore "$RUNNER_TEMP/buildora-release.p12" -storepass "$KS_PASS" -alias "$KEY_ALIAS" > /dev/null
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "BUILDORA_KEYSTORE=$RUNNER_TEMP/buildora-release.p12" >> "$GITHUB_ENV"
+            echo "Signing: release key found"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Signing secrets are missing. Building a debug-signed APK instead."
+          fi
+
+      - name: Build signed release APK
+        if: steps.sign.outputs.enabled == 'true'
+        env:
+          BUILDORA_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          BUILDORA_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          BUILDORA_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Build debug APK (no signing secrets)
+        if: steps.sign.outputs.enabled != 'true'
         run: gradle :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Rename APK
+      - name: Verify signature and rename APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/Buildora.apk
+          if [ "${{ steps.sign.outputs.enabled }}" = "true" ]; then
+            SRC=app/build/outputs/apk/release/app-release.apk
+            APKSIGNER="$(ls -d "$ANDROID_SDK_ROOT"/build-tools/*/apksigner | sort -V | tail -1)"
+            "$APKSIGNER" verify --verbose --print-certs "$SRC"
+          else
+            SRC=app/build/outputs/apk/debug/app-debug.apk
+          fi
+          cp "$SRC" dist/Buildora.apk
           ls -la dist
 
       - name: Upload APK
@@ -61,3 +102,9 @@ jobs:
           name: Buildora-APK
           path: dist/Buildora.apk
           if-no-files-found: error
+
+      - name: Attach APK to the GitHub Release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/v') && steps.sign.outputs.enabled == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Buildora.apk

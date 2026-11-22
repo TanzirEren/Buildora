@@ -31,11 +31,17 @@ Buildora itself is written in Java + XML and is built with GitHub Actions.
 
 ## Download
 
-Get the latest `Buildora.apk` (v2.1.3 Catalyst) from the **[Releases](../../releases)** page and install it.
+Get the latest `Buildora.apk` (v2.1.4 Fusion) from the **[Releases](../../releases)** page and install it.
 Android asks you to allow installing from your browser/file manager the first time.
 
 **Requirements:** Android 8.0 (API 26) or newer, an ARM phone, ~300 MB free storage.
 On first launch allow **All files access** — projects are stored in shared storage so you can reach them from any file manager.
+
+## What's new in v2.1.4 "Fusion"
+
+- **Sign APK** button on the *Build successful* dialog: rebuilds the release variant and signs it with a real key (v1 + v2 + v3, verified).
+- **Export AAB** now builds a release bundle signed with a real release key. A 2048-bit RSA key (30 years) is generated automatically when you have none and reused for every later release. Options: choose another key, R8 on/off, version-code bump, key backup to `Buildora/keystores`. The result shows the key name and SHA-256, plus *Back up key* and *Copy key details*.
+- **Buildora AI agent mode**: the AI can call 35 tools (read, search, edit, refactor, diagnostics, real builds, shell, Python if present, web search, crash logs, Git) and loops until the build passes. Every file change is backed up and can be undone. See Settings, Buildora AI.
 
 ## What's new in v2.1.3 "Catalyst"
 

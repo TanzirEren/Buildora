@@ -61,6 +61,13 @@ public class Project {
     public File configFile() { return new File(root, "buildora.json"); }
     public File workDir() { return new File(root, ".buildora"); }
     public File apkFile() { return activeVariant().apkFile(this); }
+    /** The non-debuggable variant for signed output: "release" (or the first non-debug build type) of the active flavor. */
+    public Variant releaseVariant() {
+        BuildTypeCfg bt = findBuildType("release");
+        if (bt == null) for (BuildTypeCfg b : buildTypes) if (!b.debuggable) { bt = b; break; }
+        if (bt == null) return activeVariant();
+        return Variant.resolve(this, bt.name, activeFlavor);
+    }
     public Variant activeVariant() { return Variant.resolve(this, activeBuildType, activeFlavor); }
     public BuildTypeCfg findBuildType(String n) {
         for (BuildTypeCfg b : buildTypes) if (b.name.equals(n)) return b;

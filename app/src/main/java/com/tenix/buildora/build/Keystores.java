@@ -127,4 +127,64 @@ public final class Keystores {
     public static void export(Context c, Entry e) throws IOException {
         FileUtil.copyFile(e.path(c), new File(exportDir(), e.name.replaceAll("[^A-Za-z0-9._-]", "_") + ".p12"));
     }
+
+    // ------------------------------------------------------------------ automatic release keys (v2.1.4)
+
+    private static String randomPass(int n) {
+        String abc = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        java.security.SecureRandom r = new java.security.SecureRandom();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) sb.append(abc.charAt(r.nextInt(abc.length())));
+        return sb.toString();
+    }
+
+    public static String autoKeyName(String projectName) { return projectName + " release key"; }
+
+    /** The key made automatically for this project earlier, or null. */
+    public static Entry findAuto(Context c, String projectName) {
+        String nm = autoKeyName(projectName);
+        for (Entry e : list(c)) if (e.name.equals(nm) && e.path(c).isFile()) return e;
+        return null;
+    }
+
+    /** Generates a new 2048-bit RSA release key (valid 30 years) with a random password and registers it. */
+    public static Entry generateAuto(Context c, String projectName) throws Exception {
+        String pass = randomPass(22);
+        String safe = projectName.replaceAll("[^A-Za-z0-9._-]", "_");
+        File f = new File(dir(c), "release_" + safe + "_" + UUID.randomUUID().toString().substring(0, 6) + ".p12");
+        KeyTool.generate(f, "release", pass.toCharArray(), pass.toCharArray(), projectName, "Buildora", "Buildora", "", "", "US", 30, 2048);
+        return add(c, autoKeyName(projectName), f, "release", pass, pass);
+    }
+
+    /** The key to use for a signed release: the project's chosen key, else its automatic key, else a new one. */
+    public static Entry forRelease(Context c, String projectName, String chosenId) throws Exception {
+        if (chosenId != null && !chosenId.isEmpty() && !chosenId.equals(DEBUG_ID)) {
+            for (Entry e : list(c)) if (e.id.equals(chosenId) && e.path(c).isFile()) return e;
+        }
+        String id = activeId(c);
+        if (!id.equals(DEBUG_ID)) for (Entry e : list(c)) if (e.id.equals(id) && e.path(c).isFile()) return e;
+        Entry auto = findAuto(c, projectName);
+        return auto != null ? auto : generateAuto(c, projectName);
+    }
+
+    public static Entry byId(Context c, String id) {
+        for (Entry e : list(c)) if (e.id.equals(id) && e.path(c).isFile()) return e;
+        return null;
+    }
+
+    /** Copies the key file to /Buildora/keystores and returns it. */
+    public static File backup(Context c, Entry e) throws IOException {
+        File out = new File(exportDir(), e.name.replaceAll("[^A-Za-z0-9._-]", "_") + ".p12");
+        FileUtil.copyFile(e.path(c), out);
+        return out;
+    }
+
+    /** Text with everything needed to restore the key (alias and passwords) for the user to store safely. */
+    public static String details(Entry e, KeyTool.Info i) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Key: ").append(e.name).append("\nAlias: ").append(e.alias)
+                .append("\nStore password: ").append(e.storePass).append("\nKey password: ").append(e.keyPass);
+        if (i != null) sb.append("\nValid: ").append(i.validFrom).append(" to ").append(i.validTo).append("\nSHA-256: ").append(i.sha256);
+        return sb.toString();
+    }
 }

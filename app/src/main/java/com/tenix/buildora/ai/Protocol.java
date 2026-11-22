@@ -29,7 +29,27 @@ public final class Protocol {
         public String lang = "";
     }
 
+    /** One agent tool call from a buildora-tool block: name, one-line argument and an optional multi-line body. */
+    public static final class Tool {
+        public String name = "", arg = "", body = "";
+        public Tool() {}
+        public Tool(String name, String arg, String body) { this.name = name; this.arg = arg; this.body = body; }
+    }
+
+    /** Tools that take no body: several of them may share one block, one per line. */
+    public static final Set<String> LINE_TOOLS = new HashSet<>(java.util.Arrays.asList(
+            "list_files", "read_file", "search_text", "find_files", "file_info", "find_usages", "list_resources", "project_info",
+            "class_outline", "project_stats", "delete_path", "move_path", "copy_path", "make_dir", "rename_class", "rename_resource",
+            "diagnostics", "build_project", "search_web", "fetch_url", "read_crash_logs", "add_dependency", "remove_dependency",
+            "set_version", "git_status", "git_commit", "undo_last", "install_app", "replace_all"));
+    public static final Set<String> BODY_TOOLS = new HashSet<>(java.util.Arrays.asList(
+            "write_file", "append_file", "replace_lines", "insert_lines", "run_shell", "run_python", "plan"));
+
+    public static boolean isTool(String name) { return LINE_TOOLS.contains(name) || BODY_TOOLS.contains(name); }
+
     public static final class Parsed {
+        public final List<Tool> tools = new ArrayList<>();
+        public boolean hasTools() { return !tools.isEmpty(); }
         public final List<Op> ops = new ArrayList<>();
         public final List<String> deps = new ArrayList<>();
         public final List<String> reads = new ArrayList<>();
@@ -110,6 +130,10 @@ public final class Protocol {
                 if (k.equals("name") || k.equals("app")) out.projectName = v;
                 else if (k.equals("package")) out.projectPackage = v;
             }
+            return;
+        }
+        if (lang.equals("buildora-tool") || lang.equals("buildora-tools")) {
+            parseTools(out, content);
             return;
         }
         if (lang.equals("buildora-ops")) {
@@ -194,6 +218,44 @@ public final class Protocol {
             o.content = content;
         }
         out.ops.add(o);
+    }
+
+    private static String[] splitName(String line) {
+        String t = line.trim();
+        if (t.toLowerCase(Locale.ROOT).startsWith("tool:")) t = t.substring(5).trim();
+        t = t.replace("`", "");
+        int i = 0;
+        while (i < t.length() && (Character.isLetterOrDigit(t.charAt(i)) || t.charAt(i) == '_')) i++;
+        String name = t.substring(0, i).toLowerCase(Locale.ROOT);
+        String rest = t.substring(i).trim();
+        if (rest.startsWith(":") || rest.startsWith("(")) { rest = rest.substring(1).trim(); if (rest.endsWith(")")) rest = rest.substring(0, rest.length() - 1).trim(); }
+        return new String[]{name, rest};
+    }
+
+    static void parseTools(Parsed out, String content) {
+        String[] lines = content.replace("\r\n", "\n").split("\n", -1);
+        int first = 0;
+        while (first < lines.length && lines[first].trim().isEmpty()) first++;
+        if (first >= lines.length) return;
+        String[] head = splitName(lines[first]);
+        if (!isTool(head[0])) return;
+        if (LINE_TOOLS.contains(head[0])) {
+            // one call per line (every line must start with a known read/line tool)
+            for (int i = first; i < lines.length; i++) {
+                if (lines[i].trim().isEmpty()) continue;
+                String[] nv = splitName(lines[i]);
+                if (!LINE_TOOLS.contains(nv[0])) continue;
+                out.tools.add(new Tool(nv[0], nv[1], ""));
+            }
+            return;
+        }
+        StringBuilder body = new StringBuilder();
+        int last = lines.length - 1;
+        if (last > first && lines[last].isEmpty()) last--;      // content ends with a newline
+        for (int i = first + 1; i <= last; i++) { if (i > first + 1) body.append('\n'); body.append(lines[i]); }
+        String b = body.toString();
+        // single-line shell/python calls may put everything on the first line
+        out.tools.add(new Tool(head[0], head[1], b));
     }
 
     /** Attachment names are flat: drop quotes, an "attach:" prefix and any folder part. */

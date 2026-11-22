@@ -65,6 +65,10 @@ public final class BuildEngine {
         public boolean aab;
         /** Only compile + link resources (for the layout preview) and stop. */
         public boolean previewOnly;
+        /** Sign with this keystore id instead of the variant's key ("" / null = variant default). */
+        public String signKeyId;
+        /** Overrides the variant's R8 setting when not null. */
+        public Boolean forceMinify;
     }
 
     public static final class Result {
@@ -73,6 +77,8 @@ public final class BuildEngine {
         public String variant = "";
         public String errorText = "";
         public String log = "";
+        public String keyName = "", keySha256 = "";
+        public boolean keyDebug;
         public long millis;
         public final List<Diag> diags = new ArrayList<>();
         public File output() { return aab != null ? aab : apk; }
@@ -114,6 +120,12 @@ public final class BuildEngine {
         this.p = p;
         this.opt = opt;
         this.listener = l;
+        if (opt.forceMinify != null && opt.variant != null) opt.variant.minify = opt.forceMinify;
+    }
+
+    /** Key id used for signing: the explicit override of this build, else the variant's key. */
+    private String signId(Variant v) {
+        return opt.signKeyId != null && !opt.signKeyId.isEmpty() ? opt.signKeyId : v.signingKey;
     }
 
     public void cancel() {
@@ -454,7 +466,12 @@ public final class BuildEngine {
 
         stage("Signing", 94);
         try {
-            Signer.Key key = env.signingKey(v.signingKey);
+            Signer.Key key = env.signingKey(signId(v));
+            try {
+                r.keyName = key.name;
+                r.keyDebug = "Buildora debug key".equals(key.name);
+                r.keySha256 = KeyTool.describe(key.file, key.storePass.toCharArray(), key.alias).sha256;
+            } catch (Exception ignored) { }
             if (opt.aab) {
                 Signer.signBundle(key, unsigned, out);
                 log("Bundle signed with: " + key.name);
@@ -805,7 +822,7 @@ public final class BuildEngine {
                 .append(v.minify).append(v.obfuscate).append(v.optimize).append('|').append(opt.aab).append('|')
                 .append(v.buildConfigFields).append('|').append(deps).append('|').append(env.dexRelease()).append('|');
         try {
-            Signer.Key k = env.signingKey(v.signingKey);
+            Signer.Key k = env.signingKey(signId(v));
             sb.append(k.file.getPath()).append(k.file.length()).append(k.file.lastModified()).append(k.alias);
         } catch (Exception e) { sb.append("nokey"); }
         for (File f : java) sb.append(dirFingerprint(f));

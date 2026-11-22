@@ -64,6 +64,8 @@ public final class ThinkingView extends LinearLayout {
         label.setText(detail);
     }
 
+    public void setStatus(String s) { writing = true; label.setText(s); }
+
     public void setStopping() { writing = true; label.setText("Stopping…"); }
 
     @Override protected void onAttachedToWindow() {
