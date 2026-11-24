@@ -11,7 +11,7 @@ Changes for Android (everything else is unmodified):
 - `javax.lang.model.SourceVersion`: `latestSupported()` is `RELEASE_8` (Buildora compiles at Java 8 level).
 - `javax.tools.StandardJavaFileManager`: private interface helpers became package-visible statics
   (Java 8 source level); `var` / diamond-on-anonymous-class removed in `ElementScanner14`.
-- `module-info.java` removed.
+- `module-info.java` removed; `javax.annotation.processing.Generated` removed (Android's android.jar already provides it).
 
 Licensed under GPLv2 + Classpath Exception: linking these classes into Buildora does not
 change the MIT license of Buildora's own code.
