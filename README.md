@@ -31,11 +31,24 @@ Buildora itself is written in Java + XML and is built with GitHub Actions.
 
 ## Download
 
-Get the latest `Buildora.apk` (v2.1.4 Fusion) from the **[Releases](../../releases)** page and install it.
+Get the latest `Buildora.apk` (v2.1.5 Radiant) from the **[Releases](../../releases)** page and install it.
 Android asks you to allow installing from your browser/file manager the first time.
 
 **Requirements:** Android 8.0 (API 26) or newer, an ARM phone, ~300 MB free storage.
 On first launch allow **All files access** — projects are stored in shared storage so you can reach them from any file manager.
+
+## What's new in v2.1.5 "Radiant"
+
+**Java annotation processing, on the device.** Code generators (annotation processors) now run during a build. Tested with the real AutoValue and AutoService processors; Room, Glide, Dagger and Hilt use the same mechanism but are still *experimental* (not verified).
+
+- **Real JSR 269 engine** - Buildora ships the real `javax.annotation.processing` / `javax.lang.model` / `javax.tools` API and runs processors through ECJ's annotation-processing engine (Java 8 level).
+- **Annotation processors screen** (IDE ⋮ menu): add a Maven coordinate or a local `.jar`, switch processors on or off, limit them to build types, set options (`-A` arguments), timeout and execution switches, and read the generated sources.
+- **Automatic dependencies** - processors and their transitive dependencies come from Google Maven, Maven Central and JitPack, are cached, version conflicts are resolved (highest wins and is logged), and **Offline builds** (Settings) use the cache only.
+- **Isolated process** - processors run in a separate Android process with a timeout. A crash, hang or out-of-memory only stops that process; it is killed after every run.
+- **Incremental processing** - when every processor is declared *isolating* only the generated files of changed sources are rebuilt; any other processor (or an unknown one) re-runs over all sources, and the log says why.
+- **Clear diagnostics** - the build log lists discovered processors, rounds, timings and every generated file with its origin. Errors name the exact processor and source line; errors inside generated code say which processor and source produced it; a crash shows a trimmed stack trace; a timeout names the processor that was running.
+- **Gradle interop** - `annotationProcessor '…'` lines and `annotationProcessorOptions` arguments can be pasted in. `kapt`, `ksp` and `project(':x')` lines are listed as **not supported**, never faked.
+- The catalog entries for Room, Glide, Dagger, Hilt and Epoxy offer their processor in one tap.
 
 ## What's new in v2.1.4 "Fusion"
 
@@ -181,7 +194,7 @@ toolchain/                            Android-native aapt2 binaries
 
 - **Java 8 + XML projects.** Buildora compiles Java sources at language level 1.8 (lambdas and method references work).
   Kotlin *libraries* can be used as dependencies, but Kotlin source files are not compiled.
-- **No annotation processors** (Room, Dagger/Hilt, Glide's generated API, …) yet. Such libraries are marked in the catalog.
+- **Annotation processors** run through ECJ (Java 8 level) from *Annotation processors* in the ⋮ menu. Gradle plugins do not exist on the device: **no KSP, no kapt (Kotlin), no Hilt Gradle plugin class transform**. Processors that need javac internals (`com.sun.tools.javac`, e.g. Lombok) do not work. Room, Glide, Dagger and Hilt are *experimental*: they are not verified on a device yet.
 - **Modules are compiled together with the app** (merged sources, resources and manifests), not as separate artifacts.
 - **R8 shrinks code only**; resource shrinking is not included. AAB export produces a single `base` module.
 - **`targetSdk` is 28 on purpose.** Android 10+ blocks executing binaries from app storage for newer targets, and

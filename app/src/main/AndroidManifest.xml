@@ -69,10 +69,13 @@
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ModulesActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".AptActivity" android:exported="false" />
         <activity android:name=".ProguardActivity" android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
         <service android:name=".BuildService" android:exported="false" />
+        <!-- annotation processors run here: a crash, out-of-memory or hang cannot take Buildora down -->
+        <service android:name=".AptService" android:exported="false" android:process=":apt" />
         <service android:name=".ai.AiService" android:exported="false" />
 
         <activity android:name=".LogcatActivity" android:exported="false" />

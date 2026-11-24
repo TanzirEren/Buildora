@@ -23,6 +23,14 @@ public interface BuildEnv {
     default boolean crashReports() { return true; }
     /** Detect libraries from imports / layout tags and add them automatically. */
     default boolean autoLibraries() { return true; }
+    /** Global switch for annotation processing (the per-project switch is in the project's configuration). */
+    default boolean annotationProcessing() { return true; }
+    /** Offline builds: dependencies come from the local cache only. */
+    default boolean offline() { return false; }
+    /** true on Android: processor jars are dexed and loaded with a DexClassLoader. */
+    default boolean dexProcessors() { return false; }
+    /** A compiler that runs in a separate process (annotation processing), or null when not available. */
+    default JavaCompilerRunner isolatedCompiler(File workDir) { return null; }
     /** Alignment for native libraries: 4096 or 16384 (16 KB page size devices). */
     int nativeAlign();
 

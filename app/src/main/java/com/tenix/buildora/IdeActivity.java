@@ -274,6 +274,7 @@ public class IdeActivity extends BaseActivity {
                 .add(9, R.drawable.mi_boxes, "Modules")
                 .add(10, R.drawable.mi_package, "Libraries")
                 .add(11, R.drawable.mi_scan, "Detect libraries")
+                .add(27, R.drawable.mi_bolt, "Annotation processors")
                 .add(12, R.drawable.mi_shield, "ProGuard rules")
                 .add(26, R.drawable.mi_key, "Sign APK (release)")
                 .add(13, R.drawable.mi_archive, "Export AAB (bundle)")
@@ -307,6 +308,7 @@ public class IdeActivity extends BaseActivity {
                 case 10: openScreen(LibrariesActivity.class); break;
                 case 11: saveAll(false); LibraryDetectDialog.show(this, project, null); break;
                 case 12: openScreen(ProguardActivity.class); break;
+                case 27: openScreen(AptActivity.class); break;
                 case 13: saveAll(false); SignDialog.show(this, project, true); break;
                 case 26: saveAll(false); SignDialog.show(this, project, false); break;
                 case 14: openLogcat(); break;

@@ -318,6 +318,8 @@ public class SettingsActivity extends BaseActivity {
         section("Build");
         switchRow("Auto-detect libraries", "Add libraries your imports and layouts need before each build", Prefs.AUTO_LIBS, true, null);
         switchRow("Crash reporter in debug builds", "Apps you build report crashes to Buildora > Logcat", Prefs.CRASH_REPORTS, true, null);
+        switchRow("Annotation processing", "Run annotation processors (Room, Glide, Dagger, AutoValue...) configured in Project > Annotation processors", Prefs.APT, true, null);
+        switchRow("Offline builds", "Never download: use only libraries and processors already in the local cache", Prefs.OFFLINE, false, null);
         switchRow("Incremental builds", "Reuse compiled resources and only recompile changed Java files", Prefs.INCREMENTAL, true, null);
         switchRow("Build notification", "Show progress and the result in the notification bar", Prefs.NOTIFY, true, null);
         switchRow("Verify signature after build", "Checks the v2/v3 signature of every APK", Prefs.VERIFY_SIG, true, null);

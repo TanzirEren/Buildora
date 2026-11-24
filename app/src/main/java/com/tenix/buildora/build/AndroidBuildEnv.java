@@ -28,6 +28,10 @@ public final class AndroidBuildEnv implements BuildEnv {
     @Override public boolean verifySignature() { return Prefs.bool(ctx, Prefs.VERIFY_SIG, true); }
     @Override public boolean crashReports() { return Prefs.bool(ctx, Prefs.CRASH_REPORTS, true); }
     @Override public boolean autoLibraries() { return Prefs.bool(ctx, Prefs.AUTO_LIBS, true); }
+    @Override public boolean annotationProcessing() { return Prefs.bool(ctx, Prefs.APT, true); }
+    @Override public boolean offline() { return Prefs.bool(ctx, Prefs.OFFLINE, false); }
+    @Override public boolean dexProcessors() { return true; }
+    @Override public JavaCompilerRunner isolatedCompiler(File workDir) { return new com.tenix.buildora.IsolatedCompiler(ctx, workDir); }
     @Override public int nativeAlign() { return Prefs.bool(ctx, Prefs.ALIGN_16K, true) ? 16384 : 4096; }
 
     @Override public Signer.Key signingKey(String keyId) throws Exception {

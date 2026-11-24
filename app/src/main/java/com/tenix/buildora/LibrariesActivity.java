@@ -292,8 +292,14 @@ public class LibrariesActivity extends BaseActivity {
             ad.notifyDataSetChanged();
         };
         if (l.status == Catalog.PROCESSOR) {
-            UI.dialog(this).setTitle(l.name).setMessage(l.note + "\n\nAdd it anyway?").setNegativeButton("Cancel", null)
-                    .setPositiveButton("Add", (d, w) -> add.run()).show();
+            final String[] procs = Catalog.processorsFor(l);
+            UI.dialog(this).setTitle(l.name).setMessage(l.note + (procs.length == 0 ? "\n\nAdd it anyway?"
+                            : "\n\nAdd the library and its annotation processor (" + procs[0] + ")?")).setNegativeButton("Cancel", null)
+                    .setPositiveButton("Add", (d, w) -> {
+                        add.run();
+                        for (String pc : procs) project.apt.add(pc);
+                        if (procs.length > 0) { try { project.save(); } catch (Exception ex) { UI.toast(this, ex.getMessage()); } }
+                    }).show();
         } else {
             add.run();
             if (!l.note.isEmpty()) UI.toastLong(this, l.note);

@@ -30,6 +30,8 @@ public class Project {
     public int iconRadius = 22;
     public long createdAt = System.currentTimeMillis();
     public List<String> dependencies = new ArrayList<>();
+    /** Annotation processing (processors, options, switches); empty for projects that do not use it. */
+    public com.tenix.buildora.apt.AptConfig apt = new com.tenix.buildora.apt.AptConfig();
 
     // v2: build types, flavors, modules
     public List<BuildTypeCfg> buildTypes = new ArrayList<>();
@@ -146,6 +148,8 @@ public class Project {
                 if (mods != null) for (int i = 0; i < mods.length(); i++) p.modules.add(ModuleCfg.fromJson(mods.getJSONObject(i)));
                 JSONArray amd = o.optJSONArray("appModuleDeps");
                 if (amd != null) for (int i = 0; i < amd.length(); i++) p.appModuleDeps.add(amd.getString(i));
+                JSONObject aptObj = o.optJSONObject("annotationProcessing");
+                if (aptObj != null) p.apt = com.tenix.buildora.apt.AptConfig.fromJson(aptObj.toString());
                 p.activeBuildType = o.optString("activeBuildType", "debug");
                 p.activeFlavor = o.optString("activeFlavor", "");
                 parsed = true;
@@ -187,6 +191,8 @@ public class Project {
             JSONArray amd = new JSONArray();
             for (String n : appModuleDeps) amd.put(n);
             o.put("appModuleDeps", amd);
+            if (!apt.processors.isEmpty() || !apt.options.isEmpty() || !apt.enabled)
+                o.put("annotationProcessing", new JSONObject(apt.toJson()));
             o.put("activeBuildType", activeBuildType);
             o.put("activeFlavor", activeFlavor);
             FileUtil.writeText(configFile(), o.toString(2));
@@ -296,6 +302,7 @@ public class Project {
                     if (lc.contains("junit") || lc.contains("espresso") || lc.contains("androidx.test")) continue;
                     if (!dependencies.contains(c)) dependencies.add(c);
                 }
+                apt.parseGradle(gx);
                 break;
             }
         } catch (IOException | RuntimeException ignored) { }

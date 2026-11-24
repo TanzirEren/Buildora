@@ -7,9 +7,21 @@ package com.tenix.buildora.build;
 public final class Catalog {
     private Catalog() {}
 
+    /** Annotation processor coordinates that go with a catalog library (data, not engine special cases). */
+    public static String[] processorsFor(Lib l) {
+        switch (l.name) {
+            case "Room": return new String[]{"androidx.room:room-compiler:2.6.1"};
+            case "Glide": return new String[]{"com.github.bumptech.glide:compiler:4.16.0"};
+            case "Dagger": return new String[]{"com.google.dagger:dagger-compiler:2.50"};
+            case "Hilt": return new String[]{"com.google.dagger:hilt-compiler:2.50"};
+            case "Epoxy": return new String[]{"com.airbnb.android:epoxy-processor:5.1.4"};
+            default: return new String[0];
+        }
+    }
+
     /** Works as a normal dependency. */
     public static final int OK = 0;
-    /** Added fine, but its code generator needs an annotation processor / Gradle plugin that Buildora cannot run yet. */
+    /** Added fine; its code generator is an annotation processor you add in Annotation processors (see {@link #processorsFor}). */
     public static final int PROCESSOR = 1;
     /** Not an app library (build tool, platform feature). Shown for information only. */
     public static final int TOOL = 2;
@@ -55,7 +67,7 @@ public final class Catalog {
             ok("UI", "Flexbox Layout", "CSS-like flex layout for Android", "com.google.android.flexbox:flexbox:3.0.0"),
             ok("UI", "Google Flexbox", "Same library as Flexbox Layout", "Google's Flexbox is the library above.", new String[]{"com.google.android.flexbox:flexbox:3.0.0"}),
             ok("UI", "Lottie", "Lottie animations", "com.airbnb.android:lottie:6.3.0"),
-            proc("UI", "Epoxy", "Build complex RecyclerView screens", "Hand-written models work; the @EpoxyModelClass generators need an annotation processor.",
+            proc("UI", "Epoxy", "Build complex RecyclerView screens", "Hand-written models work; for @EpoxyModelClass add epoxy-processor under Annotation processors.",
                     "com.airbnb.android:epoxy:5.1.4"),
             ok("UI", "Shimmer", "Shimmer loading effect", "com.facebook.shimmer:shimmer:0.5.0"),
             ok("UI", "Skeleton Layout", "Skeleton loading placeholders", "com.faltenreich:skeletonlayout:+"),
@@ -95,7 +107,7 @@ public final class Catalog {
             ok("JSON & data formats", "Fastjson2", "Fast JSON library", "com.alibaba.fastjson2:fastjson2:2.0.45"),
 
             // ---------------------------------------------------------------- Images & camera
-            proc("Images & camera", "Glide", "Image loading and caching", "Basic Glide.with(..) works; the generated GlideApp API needs an annotation processor.",
+            proc("Images & camera", "Glide", "Image loading and caching", "Glide.with(..) works as is. For the generated GlideApp API, add the Glide compiler under Annotation processors.",
                     "com.github.bumptech.glide:glide:4.16.0"),
             ok("Images & camera", "Picasso", "Image loading", "com.squareup.picasso:picasso:2.71828"),
             ok("Images & camera", "Coil", "Kotlin image loading", "io.coil-kt:coil:2.5.0"),
@@ -112,7 +124,7 @@ public final class Catalog {
             ok("Images & camera", "Lottie (animations)", "Vector animations", "com.airbnb.android:lottie:6.3.0"),
 
             // ---------------------------------------------------------------- Database
-            proc("Database & storage", "Room", "SQLite object mapping", "Room needs its annotation processor (room-compiler) to generate DAOs: not available in Buildora yet.",
+            proc("Database & storage", "Room", "SQLite object mapping", "Room generates its DAOs with room-compiler (an annotation processor). Experimental on the device: Room verifies queries with a desktop SQLite library that may not load on Android.",
                     "androidx.room:room-runtime:2.6.1"),
             tool("Database & storage", "SQLite", "Built into Android", "SQLite is part of Android: use android.database.sqlite.SQLiteOpenHelper. Nothing to add. (androidx.sqlite is a small wrapper if you want it.)"),
             ok("Database & storage", "AndroidX SQLite", "Support library wrapper around SQLite", "androidx.sqlite:sqlite:2.4.0"),
@@ -159,8 +171,8 @@ public final class Catalog {
             ok("Async & architecture", "LiveData", "Lifecycle-aware observable data", "androidx.lifecycle:lifecycle-livedata:2.7.0"),
             ok("Async & architecture", "Android Lifecycle", "Lifecycle + ViewModel", "androidx.lifecycle:lifecycle-runtime:2.7.0", "androidx.lifecycle:lifecycle-viewmodel:2.7.0"),
             ok("Async & architecture", "WorkManager", "Background work", "androidx.work:work-runtime:2.9.0"),
-            proc("Async & architecture", "Hilt", "Dependency injection (Dagger)", "Hilt needs a Gradle plugin and annotation processors: not available in Buildora yet.", "com.google.dagger:hilt-android:2.50"),
-            proc("Async & architecture", "Dagger", "Dependency injection", "Dagger generates code with an annotation processor: not available in Buildora yet.", "com.google.dagger:dagger:2.50"),
+            proc("Async & architecture", "Hilt", "Dependency injection (Dagger)", "Hilt needs hilt-compiler AND its Gradle plugin (class transform). Buildora has no Gradle plugins: only the plugin-free setup works, where your classes extend the generated Hilt_* base classes yourself. Experimental.", "com.google.dagger:hilt-android:2.50"),
+            proc("Async & architecture", "Dagger", "Dependency injection", "Dagger generates its components with dagger-compiler (an annotation processor). Add it under Annotation processors. Experimental on the device.", "com.google.dagger:dagger:2.50"),
             ok("Async & architecture", "Koin", "Lightweight dependency injection (no code generation)", "io.insert-koin:koin-android:3.5.3"),
             ok("Async & architecture", "EventBus", "Publish/subscribe events", "org.greenrobot:eventbus:3.3.1"),
 

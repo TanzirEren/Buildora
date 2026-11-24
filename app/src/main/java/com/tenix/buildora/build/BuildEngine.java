@@ -7,13 +7,15 @@ import com.android.tools.r8.D8Command;
 import com.android.tools.r8.Diagnostic;
 import com.android.tools.r8.DiagnosticsHandler;
 import com.android.tools.r8.OutputMode;
+import com.tenix.buildora.apt.AptConfig;
+import com.tenix.buildora.apt.AptSupport;
+import com.tenix.buildora.apt.ProcessorClasspath;
+import com.tenix.buildora.apt.ProcessorScanner;
 import com.tenix.buildora.core.FileUtil;
 import com.tenix.buildora.core.ModuleCfg;
 import com.tenix.buildora.core.Project;
 import com.tenix.buildora.core.Variant;
 
-import org.eclipse.jdt.core.compiler.CompilationProgress;
-import org.eclipse.jdt.core.compiler.batch.BatchCompiler;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -28,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -380,7 +383,7 @@ public final class BuildEngine {
         // ---------------- 4 Java (incremental)
         stage("Compiling Java", 52);
         File classesDir = new File(cacheV, "classes");
-        boolean compiled = compileJava(javaDirs, gen, classesDir, new File(cacheV, "java-state.txt"), androidJar, libs);
+        boolean compiled = compileJava(javaDirs, gen, classesDir, new File(cacheV, "java-state.txt"), androidJar, libs, v, cacheV);
         check();
 
         // ---------------- 5 dex / R8
@@ -444,7 +447,9 @@ public final class BuildEngine {
         File unsigned = new File(b, opt.aab ? "unsigned.aab" : "unsigned.apk");
         try {
             if (opt.aab) {
-                AabBuilder.build(apRes, dexFiles, libs.jars, libs.jniDirs, unsigned);
+                List<File> resJars = new ArrayList<>(libs.jars);
+                if (p.apt.enabled && !p.apt.processors.isEmpty() && classesJar.isFile()) resJars.add(classesJar);
+                AabBuilder.build(apRes, dexFiles, resJars, libs.jniDirs, unsigned);
             } else {
                 try (ApkBuilder ab = new ApkBuilder(unsigned)) {
                     ab.addAllFromZip(apRes);
@@ -456,6 +461,8 @@ public final class BuildEngine {
                         n++;
                     }
                     for (File jar : libs.jars) ab.addJavaResources(jar);
+                    // resources written by annotation processors (e.g. META-INF/services) live next to the classes
+                    if (p.apt.enabled && !p.apt.processors.isEmpty() && classesJar.isFile()) ab.addJavaResources(classesJar);
                     for (File jni : libs.jniDirs) ab.addNativeLibs(jni, env.nativeAlign());
                 }
             }
@@ -550,6 +557,7 @@ public final class BuildEngine {
                 MavenResolver mr = new MavenResolver(env.m2Dir(), new MavenResolver.Log() {
                     @Override public void log(String s) { BuildEngine.this.log(s); }
                 });
+                mr.setOffline(env.offline());
                 mr.setProgress(new MavenResolver.Progress() {
                     @Override public void onProgress(String name, long done, long total, int filesDone) {
                         if (listener != null) listener.onDownload(name, done, total, filesDone);
@@ -657,15 +665,41 @@ public final class BuildEngine {
     // ------------------------------------------------------------------ ECJ (incremental)
 
     /** @return true when at least one file was compiled */
-    private boolean compileJava(List<File> javaDirs, File gen, File classesDir, File stateFile, File androidJar, Libs libs) throws BuildException {
+    private boolean compileJava(List<File> javaDirs, File gen, File classesDir, File stateFile, File androidJar, Libs libs,
+                                Variant v, File cacheV) throws BuildException {
         List<File> sourceDirs = new ArrayList<>(javaDirs);
         sourceDirs.add(gen);
-        String fp = FileUtil.sha1("ecj1.8|" + androidJar.length() + ":" + androidJar.lastModified() + "|" + describe(libs.jars));
+        AptSupport apt = prepareApt(v, cacheV, androidJar);
+        String aptFp = apt == null ? "" : aptFingerprint(apt, v);
+        String fp = FileUtil.sha1("ecj1.8|" + androidJar.length() + ":" + androidJar.lastModified() + "|" + describe(libs.jars)
+                + (apt == null ? "" : "|" + aptFp));
         IncrementalJava inc = new IncrementalJava(stateFile, classesDir);
         IncrementalJava.Plan plan;
         try {
             if (!env.incremental()) { inc.invalidate(); FileUtil.deleteRecursive(classesDir); }
             plan = inc.plan(sourceDirs, Collections.singletonList(gen), fp);
+            if (apt != null && !plan.upToDate) {
+                apt.loadState(aptFp);
+                if (!plan.full) {
+                    String why = plan.compile.isEmpty() ? "sources were removed" : apt.incrementalBlocker();
+                    if (why != null) {
+                        log("Annotation processing: running over all sources (" + why + ")");
+                        inc.invalidate();
+                        plan = inc.plan(sourceDirs, Collections.singletonList(gen), fp);      // full: also wipes classesDir
+                    } else {
+                        Set<String> dirty = new HashSet<>();
+                        for (File f : plan.compile) {
+                            SourceIndex.Info info = plan.infos.get(f);
+                            if (info == null) continue;
+                            for (String t : info.types) dirty.add(info.pkg.isEmpty() ? t : info.pkg + "." + t);
+                        }
+                        int n = apt.cleanStale(dirty, classesDir);
+                        log("Annotation processing: incremental, " + n + " generated file" + (n == 1 ? "" : "s")
+                                + " of changed sources will be regenerated");
+                    }
+                }
+                if (plan.full) apt.resetOutputs();
+            }
         } catch (IOException e) {
             throw new BuildException("Cannot scan sources: " + e.getMessage());
         }
@@ -681,8 +715,13 @@ public final class BuildEngine {
         if (!plan.full) usedCache = true;
         log("Java: compiling " + plan.compile.size() + " of " + plan.all.size() + " files (" + (plan.full ? "full" : "incremental") + ")");
 
-        List<String> args = new ArrayList<>(Arrays.asList("-1.8", "-encoding", "UTF-8", "-nowarn", "-proc:none", "-g",
+        List<String> args = new ArrayList<>(Arrays.asList("-1.8", "-encoding", "UTF-8", "-nowarn", "-g",
                 "-bootclasspath", androidJar.getPath()));
+        if (apt == null) args.add("-proc:none");
+        else {
+            try { args.addAll(apt.compilerArgs(!plan.full)); }
+            catch (IOException e) { throw new BuildException("Annotation processing setup failed: " + e.getMessage()); }
+        }
         List<String> cp = new ArrayList<>();
         cp.add(env.lambdaStubs().getPath());    // LambdaMetafactory stub: needed for lambdas / method references
         cp.add(classesDir.getPath());
@@ -694,50 +733,114 @@ public final class BuildEngine {
         if (plan.full) { for (File d : sourceDirs) args.add(d.getPath()); }
         else { for (File f : plan.compile) args.add(f.getPath()); }
 
-        final StringWriter sw = new StringWriter();
-        final boolean[] ok = new boolean[1];
         final String[] argv = args.toArray(new String[0]);
-        final Throwable[] fail = new Throwable[1];
-        Thread t = new Thread(null, new Runnable() {
-            @Override public void run() {
-                try {
-                    PrintWriter pw = new PrintWriter(sw, true);
-                    ok[0] = BatchCompiler.compile(argv, pw, pw, new CompilationProgress() {
-                        @Override public void begin(int remainingWork) { }
-                        @Override public void done() { }
-                        @Override public boolean isCanceled() { return cancelled; }
-                        @Override public void setTaskName(String name) { }
-                        @Override public void worked(int workIncrement, int remainingWork) { }
-                    });
-                } catch (Throwable e) {
-                    fail[0] = e;
-                }
+        JavaCompilerRunner.Cancel cancelFlag = new JavaCompilerRunner.Cancel() {
+            @Override public boolean isCancelled() { return cancelled; }
+        };
+        long timeout = apt == null ? 0 : Math.max(30, p.apt.timeoutSec) * 1000L;
+        JavaCompilerRunner.Result cr = null;
+        if (apt != null && p.apt.isolate) {
+            JavaCompilerRunner iso = env.isolatedCompiler(apt.dir);
+            if (iso != null) {
+                log("Annotation processing runs in a separate process (isolated)");
+                cr = iso.run(argv, timeout, cancelFlag);
+                if (cr.unavailable) { log("Isolated process unavailable: running in this process"); cr = null; }
             }
-        }, "ecj", 512L * 1024 * 1024);
-        t.start();
-        try {
-            t.join();
-        } catch (InterruptedException e) {
-            throw new BuildException("Interrupted", true);
         }
-        String output = sw.toString();
+        if (cr == null) cr = new CompilerWorker().run(argv, timeout, cancelFlag);
+
+        String output = cr.output == null ? "" : cr.output;
         for (String line : output.split("\n")) if (!line.trim().isEmpty()) log(line);
-        if (fail[0] != null) {
-            inc.invalidate();
-            StringWriter ew = new StringWriter();
-            fail[0].printStackTrace(new PrintWriter(ew));
-            throw new BuildException("The Java compiler crashed: " + fail[0] + "\n" + trim(ew.toString(), 2500));
+        AptSupport.Summary sum = null;
+        if (apt != null) {
+            sum = apt.finish(plan.full);
+            log("Annotation processing: " + apt.classpath().found.size() + " processor" + (apt.classpath().found.size() == 1 ? "" : "s")
+                    + " (" + (plan.full ? "full" : "incremental") + ")");
+            for (String l : sum.lines) log(l);
         }
-        if (cancelled) { inc.invalidate(); throw new BuildException("Build cancelled", true); }
-        if (!ok[0]) {
+        if (cr.crash != null) {
+            inc.invalidate();
+            if (apt != null) apt.discardAfterFailure();
+            throw new BuildException("The Java compiler crashed: " + trim(cr.crash, 2500));
+        }
+        if (cancelled || cr.cancelled) { inc.invalidate(); if (apt != null) apt.discardAfterFailure(); throw new BuildException("Build cancelled", true); }
+        if (cr.timedOut || cr.died) {
+            inc.invalidate();
+            String who = sum != null && sum.running != null ? sum.running : null;
+            if (apt != null) apt.discardAfterFailure();
+            String msg = cr.timedOut
+                    ? "Annotation processing timed out after " + (timeout / 1000) + " s"
+                    : "The annotation processing process stopped unexpectedly (most likely out of memory or a native crash)";
+            if (who != null) {
+                msg += "\nProcessor running at that moment: " + who + " (round " + sum.runningRound + ")";
+                addDiag("", 0, "[" + who.substring(who.lastIndexOf('.') + 1) + "] " + msg.split("\n")[0], true);
+            } else addDiag("", 0, msg.split("\n")[0], true);
+            throw new BuildException(msg + "\nTry a smaller project, disable the processor in Annotation processors, or raise the timeout.");
+        }
+        if (!cr.ok) {
             inc.invalidate();     // partial output may exist: the next build starts clean
+            if (apt != null) apt.discardAfterFailure();
             parseEcj(output);
+            if (apt != null) for (Diag d : diags) {
+                String by = apt.generatedBy(d.file);
+                if (by != null && d.message != null) d.message = "[" + by + "] " + d.message;
+            }
+            if (sum != null) for (AptSupport.Crash c : sum.crashes) {
+                boolean dup = false;
+                String key = "[" + c.processor.substring(c.processor.lastIndexOf('.') + 1) + "] ";
+                for (Diag d : diags) if (d.message != null && d.message.startsWith(key)) dup = true;
+                if (!dup) addDiag("", 0, "[" + c.processor.substring(c.processor.lastIndexOf('.') + 1) + "] " + c.message, true);
+            }
             throw new BuildException("Java compilation failed");
         }
-        try { inc.commit(plan); } catch (IOException e) { throw new BuildException("Cannot save build state: " + e.getMessage()); }
+        try {
+            inc.commit(plan);
+            if (apt != null) apt.saveState(aptFp);
+        } catch (IOException e) { throw new BuildException("Cannot save build state: " + e.getMessage()); }
         return true;
     }
 
+    // ------------------------------------------------------------------ annotation processing
+
+    private String aptFingerprint(AptSupport apt, Variant v) {
+        StringBuilder sb = new StringBuilder(apt.fingerprint(v.name, v.buildType));
+        sb.append("|aptfmt1");
+        return FileUtil.sha1(sb.toString());
+    }
+
+    /** Resolves + discovers the processors of this variant; null when there is nothing to run. */
+    private AptSupport prepareApt(Variant v, File cacheV, File androidJar) throws BuildException {
+        if (!env.annotationProcessing()) return null;
+        List<AptConfig.Entry> entries = p.apt.active(v.name, v.buildType);
+        if (entries.isEmpty()) return null;
+        AptSupport apt = new AptSupport(p.apt, new File(cacheV, "apt"));
+        stage("Annotation processors", 53);
+        try {
+            ProcessorClasspath.Result r = ProcessorClasspath.prepare(entries, p.root, env.m2Dir(), androidJar,
+                    new File(env.dexCacheDir(), "apt"), env.dexProcessors(), env.offline(), 26,
+                    new ProcessorClasspath.Log() { @Override public void log(String s) { BuildEngine.this.log(s); } },
+                    new MavenResolver.Progress() {
+                        @Override public void onProgress(String name, long done, long total, int filesDone) {
+                            if (listener != null) listener.onDownload(name, done, total, filesDone);
+                        }
+                    });
+            for (String w : r.warnings) log("  ! " + w);
+            if (r.found.isEmpty()) {
+                log("Annotation processing: no processors found in the " + r.jars.size() + " processor jar"
+                        + (r.jars.size() == 1 ? "" : "s") + " (META-INF/services/javax.annotation.processing.Processor is missing) - skipped");
+                return null;
+            }
+            log("Annotation processors: " + r.found.size() + " found in " + r.jars.size() + " jar" + (r.jars.size() == 1 ? "" : "s"));
+            for (ProcessorScanner.Found f : r.found) log("  \u2022 " + f.className + "  [" + f.kind.label() + "]  " + f.jar.getName());
+            apt.bind(r);
+            return apt;
+        } catch (IOException e) {
+            addDiag("", 0, e.getMessage().split("\n")[0], true);
+            throw new BuildException(e.getMessage());
+        }
+    }
+
+    private static final Pattern ECJ_NOFILE = Pattern.compile("^\\d+\\. (ERROR|WARNING): (.+)$");
     private static final Pattern ECJ_HEAD = Pattern.compile("^\\d+\\. (ERROR|WARNING) in (.+?) \\(at line (\\d+)\\)\\s*$");
 
     private void parseEcj(String output) {
@@ -747,6 +850,13 @@ public final class BuildEngine {
             int i = 0;
             while (i < lines.length && lines[i].trim().isEmpty()) i++;
             if (i >= lines.length) continue;
+            Matcher nf = ECJ_NOFILE.matcher(lines[i].trim());
+            if (nf.matches()) {                       // diagnostic without a source location (e.g. a processor's global message)
+                StringBuilder one = new StringBuilder(nf.group(2));
+                for (int k = i + 1; k < lines.length; k++) if (!lines[k].trim().isEmpty() && !lines[k].matches("^\\d+ problems?.*")) one.append(' ').append(lines[k].trim());
+                addDiag("", 0, one.toString(), nf.group(1).equals("ERROR"));
+                continue;
+            }
             Matcher m = ECJ_HEAD.matcher(lines[i].trim());
             if (!m.matches()) continue;
             int caret = -1;
@@ -820,7 +930,8 @@ public final class BuildEngine {
         sb.append(v.name).append('|').append(v.applicationId).append('|').append(v.versionName).append('|').append(v.versionCode)
                 .append('|').append(v.minSdk).append('|').append(v.targetSdk).append('|').append(v.debuggable).append('|')
                 .append(v.minify).append(v.obfuscate).append(v.optimize).append('|').append(opt.aab).append('|')
-                .append(v.buildConfigFields).append('|').append(deps).append('|').append(env.dexRelease()).append('|');
+                .append(v.buildConfigFields).append('|').append(deps).append('|').append(env.dexRelease()).append('|')
+                .append(aptOverall(v)).append('|');
         try {
             Signer.Key k = env.signingKey(signId(v));
             sb.append(k.file.getPath()).append(k.file.length()).append(k.file.lastModified()).append(k.alias);
@@ -833,6 +944,18 @@ public final class BuildEngine {
         for (File d : p.libDirs) sb.append(dirFingerprint(d));
         for (ModuleCfg m : p.orderedModules()) { sb.append(fileSig(m.manifestFile)); for (File d : m.libDirs) sb.append(dirFingerprint(d)); }
         return FileUtil.sha1(sb.toString());
+    }
+
+    /** Annotation-processing part of the "nothing changed" fingerprint (config, switches, local processor jars). */
+    private String aptOverall(Variant v) {
+        if (!env.annotationProcessing()) return "apt-off";
+        StringBuilder sb = new StringBuilder(p.apt.fingerprint(v.name, v.buildType));
+        for (AptConfig.Entry e : p.apt.active(v.name, v.buildType)) if (e.isLocal()) {
+            File f = new File(e.coord);
+            if (!f.isAbsolute()) f = new File(p.root, e.coord);
+            sb.append(fileSig(f));
+        }
+        return sb.toString();
     }
 
     private static String fileSig(File f) {

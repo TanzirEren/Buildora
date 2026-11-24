@@ -35,6 +35,13 @@ public final class MavenResolver {
 
     private Progress progress;
     private int filesDone;
+    private boolean offline;
+    /** Dependencies that could not be found during {@link #resolve} (group:artifact:version - reason). */
+    public final List<String> skipped = new ArrayList<>();
+    private final java.util.Set<String> conflictNotes = new java.util.HashSet<>();
+
+    /** Offline: only the local cache is used; nothing is downloaded. */
+    public void setOffline(boolean offline) { this.offline = offline; }
 
     public void setProgress(Progress p) { this.progress = p; }
 
@@ -101,7 +108,11 @@ public final class MavenResolver {
             boolean kotlin = ga.startsWith("org.jetbrains.kotlin:kotlin-stdlib");
             if (kotlin && kotlinMax != null && compare(gav[2], kotlinMax) < 0) gav[2] = kotlinMax;   // keep stdlib artifacts aligned
             String cur = chosen.get(ga);
+            if (cur != null && compare(cur, gav[2]) > 0 && conflictNotes.add(ga + ":" + gav[2]))
+                log.log("  ~ version conflict " + ga + ": " + gav[2] + " requested, keeping higher " + cur);
             if (cur != null && compare(cur, gav[2]) >= 0) continue;
+            if (cur != null && conflictNotes.add(ga + ">" + gav[2]))
+                log.log("  ~ version conflict " + ga + ": " + cur + " replaced by higher " + gav[2]);
             Pom pom;
             try {
                 pom = loadPom(gav[0], gav[1], gav[2]);
@@ -111,8 +122,9 @@ public final class MavenResolver {
                     log.log("  ~ " + ga + ":" + gav[2] + " not found, using " + alt);
                     gav[2] = alt;
                     try { pom = loadPom(gav[0], gav[1], gav[2]); }
-                    catch (IOException e2) { log.log("  ! skipping " + ga + " (" + e2.getMessage() + ")"); continue; }
+                    catch (IOException e2) { skipped.add(ga + ":" + gav[2] + " - " + e2.getMessage()); log.log("  ! skipping " + ga + " (" + e2.getMessage() + ")"); continue; }
                 } else {
+                    skipped.add(ga + ":" + gav[2] + " - " + e.getMessage());
                     log.log("  ! skipping " + ga + ":" + gav[2] + " (" + e.getMessage() + ")");
                     continue;
                 }
@@ -160,7 +172,7 @@ public final class MavenResolver {
         if (!fresh) {
             String path = g.replace('.', '/') + "/" + a + "/maven-metadata.xml";
             boolean got = false;
-            for (String repo : REPOS) {
+            for (String repo : offline ? new String[0] : REPOS) {
                 try {
                     if (Net.download(repo + path, f, null)) { got = true; break; }
                 } catch (IOException ignored) { }
@@ -195,6 +207,7 @@ public final class MavenResolver {
 
     private boolean fetch(String g, String a, String v, String ext, File f) {
         if (f.isFile() && f.length() > 0) return true;
+        if (offline) return false;
         String path = g.replace('.', '/') + "/" + a + "/" + v + "/" + a + "-" + v + "." + ext;
         final String shown = f.getName();
         for (String repo : REPOS) {
@@ -261,7 +274,7 @@ public final class MavenResolver {
         Pom cached = poms.get(key);
         if (cached != null) return cached;
         File f = local(g, a, v, "pom");
-        if (!fetch(g, a, v, "pom", f)) throw new IOException("POM not found");
+        if (!fetch(g, a, v, "pom", f)) throw new IOException(offline ? "not in the offline cache" : "POM not found");
         Pom pom = parse(f, g, a, v);
         poms.put(key, pom);
         return pom;

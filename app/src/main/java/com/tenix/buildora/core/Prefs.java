@@ -36,6 +36,8 @@ public final class Prefs {
     public static final String AUTO_LIBS = "build_auto_libs";
     public static final String COMPLETION = "editor_completion";
     public static final String INCREMENTAL = "build_incremental";
+    public static final String APT = "build_apt";
+    public static final String OFFLINE = "build_offline";
     public static final String VERIFY_SIG = "build_verify_sig";
     public static final String ALIGN_16K = "build_align_16k";
     public static final String NOTIFY = "build_notify";
