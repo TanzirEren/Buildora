@@ -382,7 +382,9 @@ public class SettingsActivity extends BaseActivity {
         actionRow("Storage permission", Perm.hasStorage(this) ? "Granted" : "Not granted - tap to allow", () -> Perm.requestStorage(this, 21));
 
         section("About");
-        actionRow("Buildora 2.1.4 Fusion", "Developer Tanzir", () -> { });
+        String ver = "2.1.5";
+        try { ver = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) { }
+        actionRow("Buildora " + ver + " Radiant", "Developer Tanzir", () -> { });
         contactIcons();
 
         scroll.post(() -> scroll.scrollTo(0, sy));
