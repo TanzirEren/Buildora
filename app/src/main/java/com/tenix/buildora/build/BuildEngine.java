@@ -791,10 +791,18 @@ public final class BuildEngine {
                 if (by != null && d.message != null) d.message = "[" + by + "] " + d.message;
             }
             if (sum != null) for (AptSupport.Crash c : sum.crashes) {
-                boolean dup = false;
                 String key = "[" + c.processor.substring(c.processor.lastIndexOf('.') + 1) + "] ";
-                for (Diag d : diags) if (d.message != null && d.message.startsWith(key)) dup = true;
-                if (!dup) addDiag("", 0, "[" + c.processor.substring(c.processor.lastIndexOf('.') + 1) + "] " + c.message, true);
+                String frames = "";
+                if (c.trace != null && !c.trace.isEmpty()) {          // where it was thrown: the first lines of the trace
+                    String[] tl = c.trace.split("\\n");
+                    StringBuilder fb = new StringBuilder();
+                    for (int i = 0; i < tl.length && i < 7; i++) fb.append('\n').append(tl[i]);
+                    frames = fb.toString();
+                }
+                Diag found = null;
+                for (Diag d : diags) if (d.message != null && d.message.startsWith(key)) { found = d; break; }
+                if (found != null) found.message = found.message + frames;
+                else addDiag("", 0, key + c.message + frames, true);
             }
             throw new BuildException("Java compilation failed");
         }

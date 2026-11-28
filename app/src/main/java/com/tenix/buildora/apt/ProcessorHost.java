@@ -272,25 +272,35 @@ public final class ProcessorHost implements Processor {
         return t.getClass().getName() + (m == null ? "" : ": " + m);
     }
 
+    /** Exception line + the first frames (where it was thrown), then every cause with its first frames. */
     private static String trimmedTrace(Throwable t, String processor) {
-        StringWriter sw = new StringWriter();
-        t.printStackTrace(new PrintWriter(sw));
-        String[] lines = sw.toString().split("\n");
         StringBuilder sb = new StringBuilder();
-        int n = Math.min(lines.length, 14);
-        for (int i = 0; i < n; i++) sb.append(lines[i].replace("\r", "")).append('\n');
-        if (lines.length > n) sb.append("\t... ").append(lines.length - n).append(" more");
-        return sb.toString();
+        Throwable cur = t;
+        int depth = 0;
+        while (cur != null && depth < 4) {
+            sb.append(depth == 0 ? "" : "Caused by: ").append(describe(cur)).append('\n');
+            StackTraceElement[] st = cur.getStackTrace();
+            int max = depth == 0 ? 9 : 6;
+            for (int i = 0; i < st.length && i < max; i++) sb.append("    at ").append(st[i]).append('\n');
+            if (st.length > max) sb.append("    ... ").append(st.length - max).append(" more\n");
+            cur = cur.getCause() == cur ? null : cur.getCause();
+            depth++;
+        }
+        return sb.toString().trim();
     }
 
     private static String rootSummary(RoundEnvironment re) {
         try {
-            StringBuilder sb = new StringBuilder();
-            int n = 0;
+            List<String> names = new ArrayList<>();
+            List<String> generated = new ArrayList<>();
             for (Element e : re.getRootElements()) {
-                if (n++ < 4) { if (sb.length() > 0) sb.append(", "); sb.append(top(e)); }
+                String n = top(e);
+                if (n.endsWith(".R") || n.equals("R") || n.endsWith(".BuildConfig")) generated.add(n); else names.add(n);
             }
-            if (n > 4) sb.append(" (+").append(n - 4).append(" more)");
+            if (names.isEmpty()) names = generated;          // nothing but generated classes: show those
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < names.size() && i < 4; i++) { if (i > 0) sb.append(", "); sb.append(names.get(i)); }
+            if (names.size() > 4) sb.append(" (+").append(names.size() - 4).append(" more)");
             return sb.toString();
         } catch (Throwable t) { return ""; }
     }

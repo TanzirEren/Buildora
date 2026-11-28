@@ -49,6 +49,8 @@ Annotation processors now run during on-device builds — in a separate process,
 - Processor class paths no longer pull test-scoped libraries (junit, truth, guava-testlib...) when a parent POM manages the scope
 - Adding a processor (e.g. `...glide:compiler`) as a normal library now offers to add it under Annotation processors instead
 - A compiler stop without a located error now shows its message in the error dialog
+- A crashing processor now shows the exception and the frames where it was thrown right in the error dialog (and the cause chain in the Full log); the "while processing" list shows your own sources first
+- **Device-verified:** AutoValue and Dagger 2.50 build and run in the isolated process. Room 2.6.1 crashes inside RoomProcessor (NullPointerException) and is still being investigated
 
 ## 🔗 Gradle interop
 - Paste `annotationProcessor '…'`, `annotationProcessor files('…')` and `annotationProcessorOptions { arguments = [...] }`; imported Gradle projects are read the same way

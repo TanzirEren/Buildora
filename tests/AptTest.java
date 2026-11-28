@@ -241,7 +241,7 @@ public class AptTest {
         check(!r.ok && r.out.contains("[CrashProc] annotation processor crashed in round 1 while processing demo.Foo"), "crash reported with processor + sources: " + r.out);
         sum = r.apt.finish(true);
         eq(1, sum.crashes.size(), "crash event");
-        check(sum.crashes.get(0).trace.contains("q.CrashProc.process"), "stack trace trimmed to the processor");
+        check(sum.crashes.get(0).trace.contains("at q.CrashProc.process(") && sum.crashes.get(0).trace.startsWith("java.lang.IllegalStateException: boom in CrashProc"), "trace: exception line + the frames where it was thrown");
         check(!r.out.contains("Internal compiler error"), "a processor crash is not a compiler crash");
 
         // ---- missing class in the processor class path
