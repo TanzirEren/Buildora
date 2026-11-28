@@ -7,6 +7,20 @@ package com.tenix.buildora.build;
 public final class Catalog {
     private Catalog() {}
 
+    /** true when the coordinate is an annotation processor rather than a library to compile against. */
+    public static boolean isProcessor(String coord) {
+        String[] p = coord.trim().split(":");
+        if (p.length < 2) return false;
+        String ga = p[0] + ":" + p[1];
+        for (Lib l : ALL) for (String pc : processorsFor(l)) {
+            String[] q = pc.split(":");
+            if ((q[0] + ":" + q[1]).equals(ga)) return true;
+        }
+        String a = p[1];
+        return a.endsWith("-compiler") || a.endsWith("-processor") || a.equals("compiler") && p[0].contains("glide")
+                || a.equals("auto-value") || a.equals("auto-service") || a.equals("auto-factory");
+    }
+
     /** Annotation processor coordinates that go with a catalog library (data, not engine special cases). */
     public static String[] processorsFor(Lib l) {
         switch (l.name) {

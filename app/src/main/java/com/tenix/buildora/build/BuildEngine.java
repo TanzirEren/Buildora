@@ -781,6 +781,11 @@ public final class BuildEngine {
             inc.invalidate();     // partial output may exist: the next build starts clean
             if (apt != null) apt.discardAfterFailure();
             parseEcj(output);
+            if (diags.isEmpty()) {            // the compiler stopped without a located error: show what it printed
+                String first = "";
+                for (String l : output.split("\\n")) if (!l.trim().isEmpty() && !l.startsWith("-----")) { first = l.trim(); break; }
+                addDiag("", 0, first.isEmpty() ? "The Java compiler stopped without a message (see Full log)" : first, true);
+            }
             if (apt != null) for (Diag d : diags) {
                 String by = apt.generatedBy(d.file);
                 if (by != null && d.message != null) d.message = "[" + by + "] " + d.message;

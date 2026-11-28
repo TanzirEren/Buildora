@@ -22,3 +22,10 @@ put(G+'.value','auto-value-annotations','1.8.2',J+'deb-libgoogle-auto-value-java
 put(G+'.value','auto-value','1.8.2',J+'deb-libgoogle-auto-value-java/usr/share/java/auto-value-1.8.2.jar',
     [(G,'auto-common','1.1.2',''),(G+'.service','auto-service-annotations','1.0.1',''),('com.google.errorprone','error_prone_annotations','2.18.0',''),
      ('com.google.escapevelocity','escapevelocity','0.9.1',''),('com.google.guava','guava','31.0.1-jre',''),('com.squareup','javapoet','1.13.0','')])
+
+# managed-scope fixture: dependencyManagement says "junk" is test scope; the child declares no scope (Maven: test -> not resolved)
+os.makedirs(os.path.join(out,'com/example/parent/1'),exist_ok=True)
+open(os.path.join(out,'com/example/parent/1/parent-1.pom'),'w').write('<project><modelVersion>4.0.0</modelVersion><groupId>com.example</groupId><artifactId>parent</artifactId><version>1</version><packaging>pom</packaging><dependencyManagement><dependencies><dependency><groupId>com.example</groupId><artifactId>junk</artifactId><version>1</version><scope>test</scope></dependency></dependencies></dependencyManagement></project>')
+d=os.path.join(out,'com/example/mgd/1.0'); os.makedirs(d,exist_ok=True)
+open(os.path.join(d,'mgd-1.0.pom'),'w').write('<project><modelVersion>4.0.0</modelVersion><parent><groupId>com.example</groupId><artifactId>parent</artifactId><version>1</version></parent><groupId>com.example</groupId><artifactId>mgd</artifactId><version>1.0</version><dependencies><dependency><groupId>com.example</groupId><artifactId>junk</artifactId></dependency></dependencies></project>')
+shutil.copy(J+'deb-libjavapoet-java/usr/share/java/javapoet-1.13.0.jar',os.path.join(d,'mgd-1.0.jar'))

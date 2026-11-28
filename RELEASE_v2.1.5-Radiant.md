@@ -44,6 +44,12 @@ Annotation processors now run during on-device builds — in a separate process,
 - Missing processor dependency: names the missing class and where to fix it
 - Timeout / process death: names the processor that was running
 
+## 🔧 Fixes found in the first device test
+- Processors failed with `Provider "jrt" not found`: ECJ treated the phone like a Java 9+ VM and probed the JDK-only `jrt:` file system. Fixed at the API level (`SourceVersion.latest()` is Java 8 level) and covered by a test
+- Processor class paths no longer pull test-scoped libraries (junit, truth, guava-testlib...) when a parent POM manages the scope
+- Adding a processor (e.g. `...glide:compiler`) as a normal library now offers to add it under Annotation processors instead
+- A compiler stop without a located error now shows its message in the error dialog
+
 ## 🔗 Gradle interop
 - Paste `annotationProcessor '…'`, `annotationProcessor files('…')` and `annotationProcessorOptions { arguments = [...] }`; imported Gradle projects are read the same way
 - `kapt`, `ksp` and `project(':x')` are listed as **not supported**, never faked

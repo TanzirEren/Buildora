@@ -71,6 +71,8 @@ public final class MavenResolver {
         String g, a, v, packaging = "jar";
         Map<String, String> props = new HashMap<>();
         Map<String, String> mgmt = new HashMap<>();
+        /** Scopes declared in dependencyManagement (apply to dependencies that declare none). */
+        Map<String, String> mgmtScope = new HashMap<>();
         List<Dep> deps = new ArrayList<>();
     }
 
@@ -302,6 +304,7 @@ public final class MavenResolver {
                     Pom pp = loadPom(pg, pa, cleanVersion(pv));
                     pom.props.putAll(pp.props);
                     pom.mgmt.putAll(pp.mgmt);
+                    pom.mgmtScope.putAll(pp.mgmtScope);
                     pom.props.put("parent.version", pv);
                     pom.props.put("project.parent.version", pv);
                     pom.props.put("parent.groupId", pg);
@@ -332,9 +335,11 @@ public final class MavenResolver {
                         try {
                             Pom bom = loadPom(d.g, d.a, cleanVersion(d.v));
                             for (Map.Entry<String, String> e : bom.mgmt.entrySet()) pom.mgmt.putIfAbsent(e.getKey(), e.getValue());
+                            for (Map.Entry<String, String> e : bom.mgmtScope.entrySet()) pom.mgmtScope.putIfAbsent(e.getKey(), e.getValue());
                         } catch (IOException ignored) { }
                     } else if (d.v != null) {
                         pom.mgmt.put(d.g + ":" + d.a, d.v);
+                        if (d.scope != null && !d.scope.isEmpty()) pom.mgmtScope.put(d.g + ":" + d.a, d.scope.trim());
                     }
                 }
             }
@@ -343,6 +348,7 @@ public final class MavenResolver {
         if (deps != null) {
             for (Dep d : readDeps(deps, pom)) {
                 if (d.v == null) d.v = pom.mgmt.get(d.g + ":" + d.a);
+                if (d.scope == null || d.scope.trim().isEmpty()) d.scope = pom.mgmtScope.get(d.g + ":" + d.a);   // Maven: managed scope applies
                 pom.deps.add(d);
             }
         }

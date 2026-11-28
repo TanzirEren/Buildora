@@ -246,7 +246,10 @@ public enum SourceVersion {
      * {@return the latest source version that can be modeled}
      */
     public static SourceVersion latest() {
-        return RELEASE_17;
+        // Buildora (Android adaptation): ECJ uses latest() to decide whether it runs on a Java 9+ VM with
+        // the module system and the "jrt:" file system. ART has neither, so this must be RELEASE_8, the
+        // level Buildora models and compiles at. (The enum keeps all constants so newer sources parse.)
+        return RELEASE_8;
     }
 
     private static final SourceVersion latestSupported = getLatestSupported();

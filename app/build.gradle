@@ -12,7 +12,7 @@ android {
         // targetSdk 28 on purpose: allows executing the bundled aapt2 binary from app storage
         // and gives legacy (java.io.File) access to /storage/emulated/0/Buildora.
         targetSdk 28
-        versionCode 8
+        versionCode 9
         versionName '2.1.5'
         multiDexEnabled true
     }

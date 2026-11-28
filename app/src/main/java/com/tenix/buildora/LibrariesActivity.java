@@ -170,6 +170,26 @@ public class LibrariesActivity extends BaseActivity {
         coord = coord.trim();
         String[] p = coord.split(":");
         if (p.length < 2) { UI.toast(this, "Use group:artifact or group:artifact:version"); return false; }
+        if (Catalog.isProcessor(coord)) {
+            final String c = coord;
+            UI.dialog(this).setTitle("This is an annotation processor")
+                    .setMessage(coord + "\n\nProcessors generate code at build time. They belong under Annotation processors, "
+                            + "not in the app's libraries (the library you code against, e.g. glide or room-runtime, is added here).")
+                    .setNegativeButton("Cancel", null)
+                    .setNeutralButton("Add as library anyway", (d, w) -> addDependencyDirect(c))
+                    .setPositiveButton("Add as processor", (d, w) -> {
+                        project.apt.add(c);
+                        try { project.save(); } catch (Exception ex) { UI.toast(this, ex.getMessage()); }
+                        UI.toast(this, "Added under Annotation processors");
+                    }).show();
+            return true;
+        }
+        return addDependencyDirect(coord);
+    }
+
+    private boolean addDependencyDirect(String coord) {
+        coord = coord.trim();
+        String[] p = coord.split(":");
         String key = ga(coord);
         for (int i = 0; i < project.dependencies.size(); i++) {
             if (ga(project.dependencies.get(i)).equals(key)) { project.dependencies.set(i, coord); save(); render(); return true; }

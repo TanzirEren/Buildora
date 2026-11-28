@@ -264,6 +264,14 @@ public class AptTest {
         r = run(j, new String[]{"opt"}, null, o, false, plain);
         check(hasNote(r, "my.option=abc") && hasNote(r, "source=RELEASE_8"), "-A options reach the processor, source version is Java 8");
 
+        // ---- ECJ must not believe it runs on Java 9+ (it would use the jrt: file system, which Android does not have)
+        check(javax.lang.model.SourceVersion.latest() == javax.lang.model.SourceVersion.RELEASE_8, "SourceVersion.latest() is RELEASE_8 (no jrt probing on Android)");
+        org.eclipse.jdt.internal.compiler.tool.EclipseFileManager fm = new org.eclipse.jdt.internal.compiler.tool.EclipseFileManager(Locale.getDefault(), java.nio.charset.Charset.forName("UTF-8"));
+        java.lang.reflect.Field jvm9 = org.eclipse.jdt.internal.compiler.tool.EclipseFileManager.class.getDeclaredField("isOnJvm9");
+        jvm9.setAccessible(true);
+        check(!jvm9.getBoolean(fm), "ECJ file manager runs in classpath mode (isOnJvm9 == false)");
+        fm.close();
+
         // ---- no originating element -> blocks incremental processing
         r = run(j, new String[]{"noorigin"}, null, new HashMap<String, String>(), false, plain);
         check(r.ok && new File(r.gen, "demo/NoOrigin.java").isFile(), "processor without origin generates: " + r.out);
@@ -360,6 +368,12 @@ public class AptTest {
         eq(ProcessorScanner.Kind.AGGREGATING, kinds.get("com.google.auto.service.processor.AutoServiceProcessor"), "AutoService declared aggregating");
         eq(ProcessorScanner.Kind.UNKNOWN, kinds.get("com.google.auto.value.processor.AutoValueProcessor"), "AutoValue 1.8.2 declares nothing -> unknown");
         check(!r.fingerprint.isEmpty(), "fingerprint");
+
+        // Maven managed scope: a dependency without scope whose dependencyManagement says "test" is not resolved
+        AptConfig cm = new AptConfig();
+        cm.add("com.example:mgd:1.0");
+        r = ProcessorClasspath.prepare(cm.processors, WORK, m2, new File(TC, "android.jar"), new File(WORK, "dex"), false, true, 26, log, null);
+        eq(1, r.jars.size(), "test-scoped managed dependency is not pulled into the processor class path");
 
         // restricted to explicit classes
         AptConfig c2 = new AptConfig();
